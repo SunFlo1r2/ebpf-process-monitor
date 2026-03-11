@@ -1,0 +1,1 @@
+{"server": {"address": ":8080", "read_timeout": 30, "write_timeout": 30, "idle_timeout": 120}, "storage": {"max_events": 10000, "enable_persistence": false, "persistence_path": "./data/events.json"}, "websocket": {"read_buffer_size": 1024, "write_buffer_size": 1024, "ping_interval": 30}, "logging": {"level": "info", "enable_file_log": true, "log_file": "./logs/server.log"}}
