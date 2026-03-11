@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>eBPF 进程监控测试</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 30px;
+            border-radius: 16px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        .header h1 {
+            color: #667eea;
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        .status {
+            display: flex;
+            gap: 20px;
+            margin-top: 15px;
+        }
+        .status-item {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+        }
+        .events-container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            padding: 30px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        .events-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .events-header h2 {
+            color: #333;
+            font-size: 22px;
+        }
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        .events-list {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .event-item {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin-bottom: 12px;
+            border-radius: 8px;
+            transition: transform 0.2s;
+        }
+        .event-item:hover {
+            transform: translateX(4px);
+        }
+        .event-item.privilege-escalation {
+            background: #fff3cd;
+            border-left-color: #ffc107;
+        }
+        .event-item.privilege-escalation .badge {
+            background: #ffc107;
+        }
+        .event-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .event-comm {
+            font-weight: 700;
+            font-size: 16px;
+            color: #333;
+        }
+        .event-pid {
+            color: #666;
+            font-size: 14px;
+        }
+        .event-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 8px;
+            font-size: 13px;
+            color: #555;
+        }
+        .event-detail-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .badge {
+            background: #667eea;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .connection-status {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .connected {
+            background: #28a745;
+            box-shadow: 0 0 8px #28a745;
+        }
+        .disconnected {
+            background: #dc3545;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 eBPF 进程监控</h1>
+            <div class="status">
+                <div class="status-item">
+                    <span class="connection-status disconnected" id="connectionStatus"></span>
+                    <span id="connectionText">未连接</span>
+                </div>
+                <div class="status-item">
+                    📊 事件总数: <span id="eventCount">0</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="events-container">
+            <div class="events-header">
+                <h2>实时事件</h2>
+                <button class="btn" onclick="sendTestEvent()">📤 发送测试事件</button>
+            </div>
+            <div class="events-list" id="eventsList">
+                <div class="empty-state">
+                    <div class="empty-state-icon">📡</div>
+                    <p>等待接收事件...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const ws = new WebSocket('ws://localhost:8080/ws');
+        const eventsList = document.getElementById('eventsList');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const connectionText = document.getElementById('connectionText');
+        const eventCount = document.getElementById('eventCount');
+        let totalEvents = 0;
+
+        ws.onopen = function() {
+            connectionStatus.classList.remove('disconnected');
+            connectionStatus.classList.add('connected');
+            connectionText.textContent = '已连接';
+        };
+
+        ws.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            totalEvents++;
+            eventCount.textContent = totalEvents;
+            
+            // 移除空状态
+            const emptyState = eventsList.querySelector('.empty-state');
+            if (emptyState) {
+                emptyState.remove();
+            }
+
+            // 添加新事件
+            const eventItem = document.createElement('div');
+            eventItem.className = 'event-item' + (data.is_privilege_escalation ? ' privilege-escalation' : '');
+            
+            const badge = data.is_privilege_escalation 
+                ? '<span class="badge">⚠️ 权限提升</span>' 
+                : '<span class="badge">正常</span>';
+
+            eventItem.innerHTML = `
+                <div class="event-header">
+                    <span class="event-comm">${data.comm}</span>
+                    <span class="event-pid">PID: ${data.pid} | PPID: ${data.ppid}</span>
+                </div>
+                <div class="event-details">
+                    <div class="event-detail-item">📁 ${data.filename}</div>
+                    <div class="event-detail-item">👤 UID: ${data.uid} → ${data.euid}</div>
+                    <div class="event-detail-item">👥 GID: ${data.gid} → ${data.egid}</div>
+                    <div class="event-detail-item">${badge}</div>
+                </div>
+            `;
+
+            eventsList.insertBefore(eventItem, eventsList.firstChild);
+
+            // 限制显示数量
+            while (eventsList.children.length > 50) {
+                eventsList.removeChild(eventsList.lastChild);
+            }
+        };
+
+        ws.onerror = function() {
+            connectionStatus.classList.remove('connected');
+            connectionStatus.classList.add('disconnected');
+            connectionText.textContent = '连接错误';
+        };
+
+        ws.onclose = function() {
+            connectionStatus.classList.remove('connected');
+            connectionStatus.classList.add('disconnected');
+            connectionText.textContent = '已断开';
+        };
+
+        function sendTestEvent() {
+            const timestamp = Date.now() * 1000000;
+            const event = {
+                timestamp: timestamp,
+                pid: Math.floor(Math.random() * 10000) + 1000,
+                ppid: Math.floor(Math.random() * 1000) + 1,
+                uid: Math.floor(Math.random() * 2000),
+                gid: Math.floor(Math.random() * 2000),
+                euid: Math.floor(Math.random() * 2000),
+                egid: Math.floor(Math.random() * 2000),
+                comm: ['ls', 'cd', 'sudo', 'npm', 'python3', 'go'][Math.floor(Math.random() * 6)],
+                filename: ['/usr/bin/' + ['ls', 'cd', 'sudo', 'cat', 'grep'][Math.floor(Math.random() * 5)]][0],
+                is_privilege_escalation: Math.random() > 0.7
+            };
+
+            fetch('http://localhost:8080/api/events', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(event)
+            });
+        }
+    </script>
+</body>
+</html>
