@@ -4,14 +4,17 @@ import (
     "bytes"
     "context"
     "encoding/binary"
+    "encoding/json"
     "errors"
     "fmt"
     "log"
+    "net/http"
     "os"
     "os/signal"
     "strings"
     "syscall"
     "sync"
+    "time"
 
     "github.com/cilium/ebpf"
     "github.com/cilium/ebpf/link"
@@ -30,6 +33,59 @@ type ProcessEvent struct {
     Comm                  [16]byte
     Filename              [256]byte
     IsPrivilegeEscalation uint8
+}
+
+// ServerEvent 用于发送到服务器的事件格式
+type ServerEvent struct {
+    Timestamp             uint64 `json:"timestamp"`
+    Pid                   uint32 `json:"pid"`
+    Ppid                  uint32 `json:"ppid"`
+    Uid                   uint32 `json:"uid"`
+    Gid                   uint32 `json:"gid"`
+    Euid                  uint32 `json:"euid"`
+    Egid                  uint32 `json:"egid"`
+    Comm                  string `json:"comm"`
+    Filename              string `json:"filename"`
+    IsPrivilegeEscalation bool   `json:"is_privilege_escalation"`
+}
+
+const serverURL = "http://localhost:8080/api/events"
+
+var httpClient = &http.Client{
+    Timeout: 5 * time.Second,
+}
+
+// sendEventToServer 将事件发送到服务器
+func sendEventToServer(event *ProcessEvent) {
+    serverEvent := ServerEvent{
+        Timestamp:             event.Timestamp,
+        Pid:                   event.Pid,
+        Ppid:                  event.Ppid,
+        Uid:                   event.Uid,
+        Gid:                   event.Gid,
+        Euid:                  event.Euid,
+        Egid:                  event.Egid,
+        Comm:                  string(bytes.Trim(event.Comm[:], "\x00")),
+        Filename:              string(bytes.Trim(event.Filename[:], "\x00")),
+        IsPrivilegeEscalation: event.IsPrivilegeEscalation == 1,
+    }
+
+    jsonData, err := json.Marshal(serverEvent)
+    if err != nil {
+        log.Printf("Failed to marshal event: %v", err)
+        return
+    }
+
+    resp, err := httpClient.Post(serverURL, "application/json", bytes.NewBuffer(jsonData))
+    if err != nil {
+        log.Printf("Failed to send event to server: %v", err)
+        return
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode != http.StatusOK {
+        log.Printf("Server returned status: %d", resp.StatusCode)
+    }
 }
 
 func main() {
@@ -131,6 +187,9 @@ func main() {
             log.Printf("Parsing event: %v", err)
             continue
         }
+
+        // 发送事件到服务器
+        go sendEventToServer(&event)
 
         privilegeStr := ""
         if event.IsPrivilegeEscalation == 1 {

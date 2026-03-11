@@ -186,7 +186,7 @@
     </div>
 
     <script>
-        const ws = new WebSocket('ws://${window.location.host}/ws');
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
         const eventsList = document.getElementById('eventsList');
         const connectionStatus = document.getElementById('connectionStatus');
         const connectionText = document.getElementById('connectionText');
@@ -266,7 +266,7 @@
                 is_privilege_escalation: Math.random() > 0.7
             };
 
-            fetch('http://localhost:8080/api/events', {
+            fetch(`http://${window.location.host}/api/events`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
