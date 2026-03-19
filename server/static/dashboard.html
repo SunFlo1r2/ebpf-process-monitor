@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>eBPF 安全事件监控仪表板</title>
+    <!-- React CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        /* 头部样式 */
+        .header {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            padding: 30px;
+            border-radius: 16px;
+            margin-bottom: 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .header h1 {
+            font-size: 32px;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .header p {
+            color: #a0a0a0;
+            font-size: 14px;
+        }
+        
+        /* 状态栏 */
+        .status-bar {
+            display: flex;
+            gap: 16px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        .status-item {
+            background: rgba(102, 126, 234, 0.2);
+            border: 1px solid rgba(102, 126, 234, 0.3);
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .status-item.connected {
+            background: rgba(40, 167, 69, 0.2);
+            border-color: rgba(40, 167, 69, 0.3);
+        }
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        .status-dot.connected {
+            background: #28a745;
+        }
+        .status-dot.disconnected {
+            background: #dc3545;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        /* 统计卡片 */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+        .stat-card {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            padding: 24px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        .stat-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+        }
+        .stat-card.high {
+            border-left: 4px solid #dc3545;
+        }
+        .stat-card.medium {
+            border-left: 4px solid #ffc107;
+        }
+        .stat-card.low {
+            border-left: 4px solid #28a745;
+        }
+        .stat-card .icon {
+            font-size: 32px;
+            margin-bottom: 12px;
+        }
+        .stat-card .label {
+            color: #a0a0a0;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        .stat-card .value {
+            font-size: 32px;
+            font-weight: 700;
+        }
+        
+        /* 过滤器 */
+        .filters {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .filter-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .filter-group label {
+            color: #a0a0a0;
+            font-size: 14px;
+        }
+        .filter-group select, .filter-group input {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #e0e0e0;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .filter-group select:focus, .filter-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 10px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+        
+        /* 事件列表 */
+        .events-section {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            padding: 24px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .events-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            gap: 12px;
+        }
+        .events-header h2 {
+            font-size: 24px;
+        }
+        .view-toggle {
+            display: flex;
+            gap: 8px;
+        }
+        .view-btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #e0e0e0;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .view-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+        .view-btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-color: transparent;
+        }
+        .events-list {
+            max-height: 600px;
+            overflow-y: auto;
+            padding-right: 8px;
+        }
+        #tableView {
+            max-height: 600px;
+            overflow-y: auto;
+            padding-right: 8px;
+        }
+        .events-list::-webkit-scrollbar {
+            width: 8px;
+        }
+        .events-list::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+        .events-list::-webkit-scrollbar-thumb {
+            background: rgba(102, 126, 234, 0.5);
+            border-radius: 4px;
+        }
+        #tableView::-webkit-scrollbar {
+            width: 8px;
+        }
+        #tableView::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+        }
+        #tableView::-webkit-scrollbar-thumb {
+            background: rgba(102, 126, 234, 0.5);
+            border-radius: 4px;
+        }
+        
+        /* 表格样式 */
+        .events-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .events-table thead {
+            position: sticky;
+            top: 0;
+            background: rgba(26, 26, 46, 0.95);
+            z-index: 10;
+        }
+        .events-table th {
+            padding: 12px 8px;
+            text-align: left;
+            font-weight: 600;
+            color: #667eea;
+            border-bottom: 2px solid rgba(102, 126, 234, 0.3);
+        }
+        .events-table td {
+            padding: 10px 8px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .events-table tbody tr:hover {
+            background: rgba(102, 126, 234, 0.1);
+        }
+        .events-table tbody tr.new-event {
+            animation: highlight 2s ease-out;
+        }
+        @keyframes highlight {
+            0% {
+                background: rgba(102, 126, 234, 0.3);
+            }
+            100% {
+                background: transparent;
+            }
+        }
+        
+        /* 事件卡片 */
+        .event-item {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 12px;
+            border-left: 4px solid;
+            transition: all 0.3s;
+        }
+        .event-item:hover {
+            transform: translateX(4px);
+            background: rgba(0, 0, 0, 0.4);
+        }
+        .event-item.high {
+            border-left-color: #dc3545;
+        }
+        .event-item.medium {
+            border-left-color: #ffc107;
+        }
+        .event-item.low {
+            border-left-color: #28a745;
+        }
+        .event-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 12px;
+        }
+        .event-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .event-comm {
+            font-weight: 700;
+            font-size: 18px;
+        }
+        .event-id {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #a0a0a0;
+        }
+        .risk-badge {
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .risk-badge.high {
+            background: rgba(220, 53, 69, 0.2);
+            color: #dc3545;
+            border: 1px solid rgba(220, 53, 69, 0.3);
+        }
+        .risk-badge.medium {
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+            border: 1px solid rgba(255, 193, 7, 0.3);
+        }
+        .risk-badge.low {
+            background: rgba(40, 167, 69, 0.2);
+            color: #28a745;
+            border: 1px solid rgba(40, 167, 69, 0.3);
+        }
+        .event-meta {
+            color: #a0a0a0;
+            font-size: 13px;
+        }
+        .event-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            font-size: 13px;
+            color: #e0e0e0;
+        }
+        .event-detail-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .event-detail-item span {
+            color: #a0a0a0;
+        }
+        .event-badges {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 12px;
+        }
+        .badge {
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .badge-execve {
+            background: rgba(102, 126, 234, 0.2);
+            color: #667eea;
+        }
+        .badge-setuid {
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+        }
+        .badge-file-write {
+            background: rgba(220, 53, 69, 0.2);
+            color: #dc3545;
+        }
+        .badge-privilege {
+            background: rgba(220, 53, 69, 0.2);
+            color: #dc3545;
+        }
+        
+        /* 空状态 */
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+            color: #a0a0a0;
+        }
+        .empty-state-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+        
+        /* 加载动画 */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #a0a0a0;
+        }
+        .loading-spinner {
+            border: 3px solid rgba(102, 126, 234, 0.3);
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 头部 -->
+        <div class="header">
+            <h1>🛡️ eBPF 安全事件监控仪表板</h1>
+            <p>实时监控进程执行、权限提升和安全事件</p>
+            <div class="status-bar">
+                <div class="status-item">
+                    <span class="status-dot disconnected" id="connectionStatus"></span>
+                    <span id="connectionText">未连接</span>
+                </div>
+                <div class="status-item connected">
+                    <span class="status-dot connected"></span>
+                    <span id="totalEvents">0</span> 事件总数
+                </div>
+                <div class="status-item">
+                    <span id="last24Hours">0</span> 近24小时
+                </div>
+            </div>
+        </div>
+
+        <!-- 统计卡片 -->
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card high">
+                <div class="icon">🔴</div>
+                <div class="label">高风险事件</div>
+                <div class="value" id="highRiskCount">0</div>
+            </div>
+            <div class="stat-card medium">
+                <div class="icon">🟡</div>
+                <div class="label">中风险事件</div>
+                <div class="value" id="mediumRiskCount">0</div>
+            </div>
+            <div class="stat-card low">
+                <div class="icon">🟢</div>
+                <div class="label">低风险事件</div>
+                <div class="value" id="lowRiskCount">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon">📊</div>
+                <div class="label">SETUID 事件</div>
+                <div class="value" id="setuidCount">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon">🚀</div>
+                <div class="label">EXECVE 事件</div>
+                <div class="value" id="execveCount">0</div>
+            </div>
+        </div>
+
+        <!-- 过滤器 -->
+        <div class="filters">
+            <div class="filter-group">
+                <label>风险等级:</label>
+                <select id="riskLevelFilter" onchange="applyFilters()">
+                    <option value="">全部</option>
+                    <option value="HIGH">高风险</option>
+                    <option value="MEDIUM">中风险</option>
+                    <option value="LOW">低风险</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>事件类型:</label>
+                <select id="eventTypeFilter" onchange="applyFilters()">
+                    <option value="">全部</option>
+                    <option value="0">EXECVE</option>
+                    <option value="1">SETUID</option>
+                    <option value="2">FILE_WRITE</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Agent ID:</label>
+                <input type="text" id="agentIdFilter" placeholder="输入 Agent ID" onchange="applyFilters()">
+            </div>
+            <button class="btn" onclick="loadHighRiskEvents()">🔴 仅显示高风险</button>
+            <button class="btn btn-secondary" onclick="loadStatistics()">📊 刷新统计</button>
+            <button class="btn btn-secondary" onclick="sendTestEvent()">📤 发送测试事件</button>
+        </div>
+
+        <!-- 事件列表 -->
+        <div class="events-section">
+            <div class="events-header">
+                <h2>安全事件列表</h2>
+                <div class="view-toggle">
+                    <button class="view-btn active" onclick="switchView('card')" id="cardViewBtn">
+                        📋 卡片视图
+                    </button>
+                    <button class="view-btn" onclick="switchView('table')" id="tableViewBtn">
+                        📊 表格视图
+                    </button>
+                </div>
+            </div>
+            
+            <!-- 卡片视图 -->
+            <div class="events-list" id="eventsList" style="display: block;">
+                <div class="loading">
+                    <div class="loading-spinner"></div>
+                    <p>加载中...</p>
+                </div>
+            </div>
+            
+            <!-- 表格视图 -->
+            <div id="tableView" style="display: none;">
+                <div id="react-table-root"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // WebSocket 连接
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+        const eventsList = document.getElementById('eventsList');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const connectionText = document.getElementById('connectionText');
+        
+        // 加载统计数据
+        async function loadStatistics() {
+            try {
+                const response = await fetch(`http://${window.location.host}/api/statistics`);
+                const stats = await response.json();
+                
+                document.getElementById('totalEvents').textContent = stats.total_events;
+                document.getElementById('last24Hours').textContent = stats.last_24_hours;
+                document.getElementById('highRiskCount').textContent = stats.risk_level_distribution.HIGH || 0;
+                document.getElementById('mediumRiskCount').textContent = stats.risk_level_distribution.MEDIUM || 0;
+                document.getElementById('lowRiskCount').textContent = stats.risk_level_distribution.LOW || 0;
+                document.getElementById('setuidCount').textContent = stats.event_type_distribution.SETUID || 0;
+                document.getElementById('execveCount').textContent = stats.event_type_distribution.EXECVE || 0;
+            } catch (error) {
+                console.error('Failed to load statistics:', error);
+            }
+        }
+
+        // 加载事件列表
+        async function loadEvents(params = {}) {
+            try {
+                const queryParams = new URLSearchParams(params);
+                const response = await fetch(`http://${window.location.host}/api/events?${queryParams}`);
+                const events = await response.json();
+                
+                displayEvents(events);
+            } catch (error) {
+                console.error('Failed to load events:', error);
+                eventsList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">❌</div>
+                        <p>加载失败</p>
+                    </div>
+                `;
+            }
+        }
+
+        // 加载高风险事件
+        async function loadHighRiskEvents() {
+            document.getElementById('riskLevelFilter').value = 'HIGH';
+            applyFilters();
+        }
+
+        // 应用过滤器
+        function applyFilters() {
+            const params = {
+                limit: 100
+            };
+            
+            const riskLevel = document.getElementById('riskLevelFilter').value;
+            const eventType = document.getElementById('eventTypeFilter').value;
+            const agentId = document.getElementById('agentIdFilter').value;
+            
+            if (riskLevel) params.risk_level = riskLevel;
+            if (eventType) params.event_type = eventType;
+            if (agentId) params.agent_id = agentId;
+            
+            loadEvents(params);
+        }
+
+        // 显示事件
+        function displayEvents(events) {
+            if (!events || events.length === 0) {
+                eventsList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📭</div>
+                        <p>暂无事件</p>
+                    </div>
+                `;
+                return;
+            }
+
+            eventsList.innerHTML = '';
+            events.forEach(event => {
+                const eventItem = createEventItem(event);
+                eventsList.appendChild(eventItem);
+            });
+        }
+
+        // 创建事件卡片
+        function createEventItem(event) {
+            const timestamp = new Date(event.timestamp / 1000000);
+            const timeStr = timestamp.toLocaleString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            });
+
+            // 事件类型徽章
+            let eventTypeBadge = '';
+            let eventTypeClass = '';
+            switch(event.event_type) {
+                case 0:
+                    eventTypeBadge = '<span class="badge badge-execve">EXECVE</span>';
+                    eventTypeClass = 'badge-execve';
+                    break;
+                case 1:
+                    eventTypeBadge = '<span class="badge badge-setuid">SETUID</span>';
+                    eventTypeClass = 'badge-setuid';
+                    break;
+                case 2:
+                    eventTypeBadge = '<span class="badge badge-file-write">FILE_WRITE</span>';
+                    eventTypeClass = 'badge-file-write';
+                    break;
+                default:
+                    eventTypeBadge = '<span class="badge">UNKNOWN</span>';
+            }
+
+            // 风险等级徽章
+            const riskClass = (event.risk_level || 'LOW').toLowerCase();
+            const riskBadge = `<span class="risk-badge ${riskClass}">${event.risk_level || 'LOW'}</span>`;
+
+            // 权限提升徽章
+            const privilegeBadge = event.is_privilege_escalation 
+                ? '<span class="badge badge-privilege">⚠️ 权限提升</span>' 
+                : '';
+
+            // 事件描述
+            let eventDesc = '';
+            switch(event.event_type) {
+                case 0:
+                    eventDesc = event.filename || '未知文件';
+                    break;
+                case 1:
+                    eventDesc = `UID: ${event.old_uid} → ${event.new_uid}`;
+                    break;
+                case 2:
+                    eventDesc = event.filepath || event.filename || '未知文件';
+                    break;
+            }
+
+            const eventItem = document.createElement('div');
+            eventItem.className = `event-item ${riskClass}`;
+            eventItem.innerHTML = `
+                <div class="event-header">
+                    <div class="event-title">
+                        <span class="event-comm">${event.comm}</span>
+                        <span class="event-id">ID: ${event.id}</span>
+                        ${riskBadge}
+                    </div>
+                    <div class="event-meta">
+                        <span>🕐 ${timeStr}</span>
+                        ${event.agent_id ? `<span>🤖 ${event.agent_id}</span>` : ''}
+                    </div>
+                </div>
+                <div class="event-details">
+                    <div class="event-detail-item"><span>PID:</span> ${event.pid} | <span>PPID:</span> ${event.ppid}</div>
+                    <div class="event-detail-item"><span>UID:</span> ${event.uid} | <span>EUID:</span> ${event.euid}</div>
+                    <div class="event-detail-item"><span>GID:</span> ${event.gid} | <span>EGID:</span> ${event.egid}</div>
+                    <div class="event-detail-item"><span>文件:</span> ${eventDesc}</div>
+                </div>
+                <div class="event-badges">
+                    ${eventTypeBadge}
+                    ${privilegeBadge}
+                </div>
+            `;
+
+            return eventItem;
+        }
+
+        // 发送测试事件
+        function sendTestEvent() {
+            const timestamp = Date.now() * 1000000;
+            const eventTypes = [0, 1, 2];
+            const eventType = eventTypes[Math.floor(Math.random() * eventTypes.length)];
+            
+            const event = {
+                timestamp: timestamp,
+                pid: Math.floor(Math.random() * 10000) + 1000,
+                ppid: Math.floor(Math.random() * 1000) + 1,
+                uid: Math.floor(Math.random() * 2000),
+                gid: Math.floor(Math.random() * 2000),
+                euid: Math.floor(Math.random() * 2000),
+                egid: Math.floor(Math.random() * 2000),
+                old_uid: Math.floor(Math.random() * 2000),
+                new_uid: Math.floor(Math.random() * 2000),
+                event_type: eventType,
+                target_file_type: 0,
+                comm: ['ls', 'cd', 'sudo', 'npm', 'python3', 'go', 'passwd'][Math.floor(Math.random() * 7)],
+                filename: ['/usr/bin/' + ['ls', 'cd', 'sudo', 'cat', 'grep', 'passwd'][Math.floor(Math.random() * 6)]][0],
+                filepath: '',
+                is_privilege_escalation: Math.random() > 0.7
+            };
+            
+            if (eventType === 1) {
+                event.old_uid = Math.floor(Math.random() * 2000);
+                event.new_uid = 0;
+                event.is_privilege_escalation = true;
+            } else if (eventType === 2) {
+                const files = ['passwd', 'shadow'];
+                event.filepath = '/etc/' + files[Math.floor(Math.random() * files.length)];
+                event.target_file_type = event.filepath.includes('passwd') ? 1 : 2;
+            }
+
+            fetch(`http://${window.location.host}/api/events`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(event)
+            }).then(response => response.json())
+              .then(data => {
+                  console.log('Event sent:', data);
+                  // 刷新数据
+                  setTimeout(() => {
+                      loadStatistics();
+                      applyFilters();
+                  }, 500);
+              });
+        }
+
+        // WebSocket 连接处理
+        ws.onopen = function() {
+            connectionStatus.classList.remove('disconnected');
+            connectionStatus.classList.add('connected');
+            connectionText.textContent = '已连接';
+        };
+
+        ws.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            console.log('New event via WebSocket:', data);
+            
+            // 自动刷新统计数据
+            loadStatistics();
+            
+            // 如果当前过滤器允许，添加新事件到列表
+            applyFilters();
+        };
+
+        ws.onerror = function() {
+            connectionStatus.classList.remove('connected');
+            connectionStatus.classList.add('disconnected');
+            connectionText.textContent = '连接错误';
+        };
+
+        ws.onclose = function() {
+            connectionStatus.classList.remove('connected');
+            connectionStatus.classList.add('disconnected');
+            connectionText.textContent = '已断开';
+        };
+
+        // 视图切换功能
+        let currentView = 'card';
+        let currentEvents = [];
+        
+        function switchView(view) {
+            currentView = view;
+            const cardViewBtn = document.getElementById('cardViewBtn');
+            const tableViewBtn = document.getElementById('tableViewBtn');
+            const eventsList = document.getElementById('eventsList');
+            const tableView = document.getElementById('tableView');
+            
+            if (view === 'card') {
+                cardViewBtn.classList.add('active');
+                tableViewBtn.classList.remove('active');
+                eventsList.style.display = 'block';
+                tableView.style.display = 'none';
+            } else {
+                cardViewBtn.classList.remove('active');
+                tableViewBtn.classList.add('active');
+                eventsList.style.display = 'none';
+                tableView.style.display = 'block';
+                renderTableView();
+            }
+        }
+
+        // 渲染表格视图（使用 React）
+        function renderTableView() {
+            const root = document.getElementById('react-table-root');
+            if (!root) return;
+            
+            const { useState, useEffect } = React;
+            
+            function EventsTable({ events }) {
+                return React.createElement('table', { className: 'events-table' },
+                    React.createElement('thead', null,
+                        React.createElement('tr', null,
+                            React.createElement('th', null, 'ID'),
+                            React.createElement('th', null, '进程名'),
+                            React.createElement('th', null, 'PID'),
+                            React.createElement('th', null, '用户'),
+                            React.createElement('th', null, '时间'),
+                            React.createElement('th', null, '事件类型'),
+                            React.createElement('th', null, '权限提升'),
+                            React.createElement('th', null, '风险等级')
+                        )
+                    ),
+                    React.createElement('tbody', null,
+                        events.map(event => {
+                            const timestamp = new Date(event.timestamp / 1000000);
+                            const timeStr = timestamp.toLocaleString('zh-CN', {
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                                hour12: false
+                            });
+                            
+                            const eventTypeMap = {
+                                0: 'EXECVE',
+                                1: 'SETUID',
+                                2: 'FILE_WRITE'
+                            };
+                            
+                            const riskClass = event.risk_level === 'HIGH' ? 'high' : 
+                                           event.risk_level === 'MEDIUM' ? 'medium' : 'low';
+                            
+                            const riskColor = event.risk_level === 'HIGH' ? '#dc3545' : 
+                                            event.risk_level === 'MEDIUM' ? '#ffc107' : '#28a745';
+                            
+                            return React.createElement('tr', { key: event.id, className: 'new-event' },
+                                React.createElement('td', null, event.id),
+                                React.createElement('td', null, 
+                                    React.createElement('span', { style: { fontWeight: 600 } }, event.comm)
+                                ),
+                                React.createElement('td', null, event.pid),
+                                React.createElement('td', null, event.uid),
+                                React.createElement('td', null, timeStr),
+                                React.createElement('td', null, eventTypeMap[event.event_type] || 'UNKNOWN'),
+                                React.createElement('td', null, 
+                                    event.is_privilege_escalation ? '⚠️ 是' : '否'
+                                ),
+                                React.createElement('td', null,
+                                    React.createElement('span', { 
+                                        style: { 
+                                            color: riskColor,
+                                            fontWeight: 600,
+                                            padding: '2px 8px',
+                                            borderRadius: '4px',
+                                            background: riskColor + '20'
+                                        }
+                                    }, event.risk_level)
+                                )
+                            );
+                        })
+                    )
+                );
+            }
+            
+            ReactDOM.render(React.createElement(EventsTable, { events: currentEvents }), root);
+        }
+
+        // 修改 displayEvents 函数，保存当前事件数据
+        const originalDisplayEvents = displayEvents;
+        displayEvents = function(events) {
+            currentEvents = events;
+            originalDisplayEvents(events);
+            if (currentView === 'table') {
+                renderTableView();
+            }
+        };
+
+        // 页面加载时初始化
+        window.addEventListener('DOMContentLoaded', () => {
+            loadStatistics();
+            applyFilters();
+            
+            // 定期刷新统计数据（每10秒）
+            setInterval(loadStatistics, 10000);
+        });
+    </script>
+</body>
+</html>

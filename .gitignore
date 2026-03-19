@@ -1,39 +1,37 @@
-# 编译后的二进制文件
-agent/agent
-server/server
+# 编译的二进制文件
 *.o
 *.so
+*.a
+agent/agent
+server/server
+server/server_new
 
-# Go 编译文件
-go.work
-
-# IDE 配置文件
-.vscode/
-.idea/
-*.swp
-*.swo
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+server/security_events.db
 
 # 日志文件
 *.log
-logs/
+server/server.log
+server/server_new.log
 
-# 数据文件
-data/
-
-# 操作系统文件
-.DS_Store
-Thumbs.db
+# Go 相关
+vendor/
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
 
 # 临时文件
 *.tmp
-*.bak
+*.swp
 *~
+.DS_Store
 
-# Node modules（如果将来使用前端框架）
-node_modules/
-dist/
-build/
-
-# 环境变量文件
+# 配置文件（可能包含敏感信息）
+config.json
 .env
-.env.local

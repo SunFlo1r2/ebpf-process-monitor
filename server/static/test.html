@@ -193,6 +193,106 @@
         const eventCount = document.getElementById('eventCount');
         let totalEvents = 0;
 
+        // 从服务器加载历史事件
+        async function loadHistoricalEvents() {
+            try {
+                const response = await fetch(`http://${window.location.host}/api/events`);
+                const events = await response.json();
+                
+                // 清空空状态
+                const emptyState = eventsList.querySelector('.empty-state');
+                if (emptyState) {
+                    emptyState.remove();
+                }
+
+                // 显示历史事件（倒序，最新的在前面）
+                events.reverse().forEach(data => {
+                    totalEvents++;
+                    eventCount.textContent = totalEvents;
+                    addEventToUI(data);
+                });
+            } catch (error) {
+                console.error('Failed to load historical events:', error);
+            }
+        }
+
+        // 添加事件到UI
+        function addEventToUI(data) {
+            // 移除空状态
+            const emptyState = eventsList.querySelector('.empty-state');
+            if (emptyState) {
+                emptyState.remove();
+            }
+
+            // 格式化时间戳（纳秒转毫秒）
+            const timestamp = new Date(data.timestamp / 1000000);
+            const timeStr = timestamp.toLocaleString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            });
+
+            // 根据事件类型确定显示的信息
+            let eventDesc = '';
+            let eventTypeBadge = '';
+            
+            switch(data.event_type) {
+                case 0: // EVENT_EXECVE
+                    eventDesc = `📁 ${data.filename}`;
+                    eventTypeBadge = '<span class="badge" style="background: #667eea;">EXECVE</span>';
+                    break;
+                case 1: // EVENT_SETUID
+                    eventDesc = `🔐 UID 变更: ${data.old_uid} → ${data.new_uid}`;
+                    eventTypeBadge = '<span class="badge" style="background: #ffc107;">SETUID</span>';
+                    break;
+                case 2: // EVENT_FILE_WRITE
+                    let fileName = data.filepath || data.filename;
+                    eventDesc = `📝 写入文件: ${fileName}`;
+                    eventTypeBadge = '<span class="badge" style="background: #dc3545;">FILE_WRITE</span>';
+                    break;
+                default:
+                    eventDesc = `📁 ${data.filename}`;
+                    eventTypeBadge = '<span class="badge" style="background: #6c757d;">UNKNOWN</span>';
+            }
+
+            const privilegeBadge = data.is_privilege_escalation 
+                ? '<span class="badge" style="background: #dc3545;">⚠️ 权限提升</span>' 
+                : '<span class="badge" style="background: #28a745;">正常</span>';
+
+            // 添加新事件
+            const eventItem = document.createElement('div');
+            eventItem.className = 'event-item' + (data.is_privilege_escalation ? ' privilege-escalation' : '');
+            
+            eventItem.innerHTML = `
+                <div class="event-header">
+                    <span class="event-comm">${data.comm}</span>
+                    <span class="event-pid">PID: ${data.pid} | PPID: ${data.ppid}</span>
+                </div>
+                <div class="event-details">
+                    <div class="event-detail-item">🕐 ${timeStr}</div>
+                    <div class="event-detail-item">${eventDesc}</div>
+                    <div class="event-detail-item">👤 UID: ${data.uid} | EUID: ${data.euid}</div>
+                    <div class="event-detail-item">👥 GID: ${data.gid} | EGID: ${data.egid}</div>
+                    <div class="event-detail-item">${eventTypeBadge}</div>
+                    <div class="event-detail-item">${privilegeBadge}</div>
+                </div>
+            `;
+
+            eventsList.insertBefore(eventItem, eventsList.firstChild);
+
+            // 限制显示数量
+            while (eventsList.children.length > 50) {
+                eventsList.removeChild(eventsList.lastChild);
+            }
+        }
+
+        // 页面加载时获取历史事件
+        window.addEventListener('DOMContentLoaded', loadHistoricalEvents);
+
         ws.onopen = function() {
             connectionStatus.classList.remove('disconnected');
             connectionStatus.classList.add('connected');
@@ -203,40 +303,7 @@
             const data = JSON.parse(event.data);
             totalEvents++;
             eventCount.textContent = totalEvents;
-            
-            // 移除空状态
-            const emptyState = eventsList.querySelector('.empty-state');
-            if (emptyState) {
-                emptyState.remove();
-            }
-
-            // 添加新事件
-            const eventItem = document.createElement('div');
-            eventItem.className = 'event-item' + (data.is_privilege_escalation ? ' privilege-escalation' : '');
-            
-            const badge = data.is_privilege_escalation 
-                ? '<span class="badge">⚠️ 权限提升</span>' 
-                : '<span class="badge">正常</span>';
-
-            eventItem.innerHTML = `
-                <div class="event-header">
-                    <span class="event-comm">${data.comm}</span>
-                    <span class="event-pid">PID: ${data.pid} | PPID: ${data.ppid}</span>
-                </div>
-                <div class="event-details">
-                    <div class="event-detail-item">📁 ${data.filename}</div>
-                    <div class="event-detail-item">👤 UID: ${data.uid} → ${data.euid}</div>
-                    <div class="event-detail-item">👥 GID: ${data.gid} → ${data.egid}</div>
-                    <div class="event-detail-item">${badge}</div>
-                </div>
-            `;
-
-            eventsList.insertBefore(eventItem, eventsList.firstChild);
-
-            // 限制显示数量
-            while (eventsList.children.length > 50) {
-                eventsList.removeChild(eventsList.lastChild);
-            }
+            addEventToUI(data);
         };
 
         ws.onerror = function() {
@@ -253,7 +320,10 @@
 
         function sendTestEvent() {
             const timestamp = Date.now() * 1000000;
-            const event = {
+            const eventTypes = [0, 1, 2]; // EXECVE, SETUID, FILE_WRITE
+            const eventType = eventTypes[Math.floor(Math.random() * eventTypes.length)];
+            
+            let event = {
                 timestamp: timestamp,
                 pid: Math.floor(Math.random() * 10000) + 1000,
                 ppid: Math.floor(Math.random() * 1000) + 1,
@@ -261,10 +331,26 @@
                 gid: Math.floor(Math.random() * 2000),
                 euid: Math.floor(Math.random() * 2000),
                 egid: Math.floor(Math.random() * 2000),
-                comm: ['ls', 'cd', 'sudo', 'npm', 'python3', 'go'][Math.floor(Math.random() * 6)],
-                filename: ['/usr/bin/' + ['ls', 'cd', 'sudo', 'cat', 'grep'][Math.floor(Math.random() * 5)]][0],
+                old_uid: Math.floor(Math.random() * 2000),
+                new_uid: Math.floor(Math.random() * 2000),
+                event_type: eventType,
+                target_file_type: 0,
+                comm: ['ls', 'cd', 'sudo', 'npm', 'python3', 'go', 'passwd'][Math.floor(Math.random() * 7)],
+                filename: ['/usr/bin/' + ['ls', 'cd', 'sudo', 'cat', 'grep', 'passwd'][Math.floor(Math.random() * 6)]][0],
+                filepath: '',
                 is_privilege_escalation: Math.random() > 0.7
             };
+            
+            // 根据事件类型设置特定字段
+            if (eventType === 1) { // SETUID
+                event.old_uid = Math.floor(Math.random() * 2000);
+                event.new_uid = 0; // 提升到 root
+                event.is_privilege_escalation = true;
+            } else if (eventType === 2) { // FILE_WRITE
+                const files = ['passwd', 'shadow'];
+                event.filepath = '/etc/' + files[Math.floor(Math.random() * files.length)];
+                event.target_file_type = event.filepath.includes('passwd') ? 1 : 2;
+            }
 
             fetch(`http://${window.location.host}/api/events`, {
                 method: 'POST',
