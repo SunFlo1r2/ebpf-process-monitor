@@ -503,7 +503,7 @@ func main() {
 	r.HandleFunc("/ws", server.handleWebSocket)
 
 	// 静态文件服务（用于前端）
-	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("./server/static"))))
+	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("./static"))))
 
 	// 启动服务器
 	addr := ":8080"
