@@ -78,16 +78,34 @@ func (ra *RiskAnalyzer) Evaluate(event ProcessEvent) RiskLevel {
 			// root 用户执行的常规程序，极低风险
 			score = 0
 		} else if isHighRiskProgram(event.Comm) {
-			// root 用户执行的高风险程序，中等风险
+			// root 用户执行的高风险程序，中等风险（15分）
 			score = 15
+		}
+	}
+
+	// 5. 如果被标记为权限提升，增加额外风险分数
+	// 真正的权限提升（从普通用户到root）应该获得高风险评分
+	if event.IsPrivilegeEscalation && score > 0 {
+		// 特殊处理：如果 comm 是 sudo 或 su，直接设为高风险
+		// 无论 UID 和 EUID 是什么值
+		if event.Comm == "sudo" || event.Comm == "su" {
+			// sudo/su 命令，高风险（27分）
+			score = 27
+		} else if isRealPrivilegeEscalation {
+			// 其他真正的权限提升，高风险（25分）
+			score = 25
+		} else {
+			// root 用户直接执行的其他高风险程序（已被标记为权限提升但不是真正的提升）
+			// 在第4步已经设置为15分，这里保持不变，不加分
+			// 15分在中风险范围内（12-24分）
 		}
 	}
 
 	// 根据总分返回风险等级
 	// 调整阈值，让分布更合理
-	if score >= 35 {
+	if score >= 25 {
 		return RiskHigh
-	} else if score >= 15 {
+	} else if score >= 12 {
 		return RiskMedium
 	}
 	return RiskLow

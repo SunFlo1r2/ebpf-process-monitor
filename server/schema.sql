@@ -19,7 +19,15 @@ CREATE TABLE IF NOT EXISTS security_events (
     risk_level TEXT NOT NULL DEFAULT 'LOW',
     agent_id TEXT DEFAULT 'default',
     fingerprint TEXT UNIQUE,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    
+    -- 网络连接相关字段
+    src_addr INTEGER DEFAULT 0,
+    dst_addr INTEGER DEFAULT 0,
+    src_port INTEGER DEFAULT 0,
+    dst_port INTEGER DEFAULT 0,
+    protocol INTEGER DEFAULT 0,
+    exit_code INTEGER DEFAULT 0
 );
 
 -- 创建索引以提高查询性能

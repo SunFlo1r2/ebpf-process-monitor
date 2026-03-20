@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
@@ -13,23 +14,30 @@ import (
 
 // ProcessEvent 表示一个进程执行事件
 type ProcessEvent struct {
-	Timestamp             uint64 `json:"timestamp"`
-	Pid                   uint32 `json:"pid"`
-	Ppid                  uint32 `json:"ppid"`
-	Uid                   uint32 `json:"uid"`
-	Gid                   uint32 `json:"gid"`
-	Euid                  uint32 `json:"euid"`
-	Egid                  uint32 `json:"egid"`
-	OldUid                uint32 `json:"old_uid"`
-	NewUid                uint32 `json:"new_uid"`
-	Comm                  string `json:"comm"`
-	Filename              string `json:"filename"`
-	Filepath              string `json:"filepath"`
-	IsPrivilegeEscalation bool   `json:"is_privilege_escalation"`
-	EventType             uint8  `json:"event_type"`
-	TargetFileType        uint8  `json:"target_file_type"`
+    Timestamp             uint64 `json:"timestamp"`
+    Pid                   uint32 `json:"pid"`
+    Ppid                  uint32 `json:"ppid"`
+    Uid                   uint32 `json:"uid"`
+    Gid                   uint32 `json:"gid"`
+    Euid                  uint32 `json:"euid"`
+    Egid                  uint32 `json:"egid"`
+    OldUid                uint32 `json:"old_uid"`
+    NewUid                uint32 `json:"new_uid"`
+    Comm                  string `json:"comm"`
+    Filename              string `json:"filename"`
+    Filepath              string `json:"filepath"`
+    IsPrivilegeEscalation bool   `json:"is_privilege_escalation"`
+    EventType             uint8  `json:"event_type"`
+    TargetFileType        uint8  `json:"target_file_type"`
+    
+    // 网络连接相关字段
+    SrcAddr               uint32 `json:"src_addr"`
+    DstAddr               uint32 `json:"dst_addr"`
+    SrcPort               uint16 `json:"src_port"`
+    DstPort               uint16 `json:"dst_port"`
+    Protocol              uint8  `json:"protocol"`
+    ExitCode              uint8  `json:"exit_code"`
 }
-
 // EventStore 存储进程事件
 type EventStore struct {
 	mu     sync.RWMutex
@@ -317,29 +325,148 @@ func (s *Server) handleStatistics(w http.ResponseWriter, r *http.Request) {
 
 // handleHighRiskEvents 处理高风险事件查询
 func (s *Server) handleHighRiskEvents(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
-	limit := 100
+    query := r.URL.Query()
+    limit := 100
 
-	if limitStr := query.Get("limit"); limitStr != "" {
-		if parsed, err := fmt.Sscanf(limitStr, "%d", &limit); err == nil && parsed == 1 && limit > 0 {
-			if limit > 1000 {
-				limit = 1000
-			}
-		}
-	}
+    if limitStr := query.Get("limit"); limitStr != "" {
+        if parsed, err := fmt.Sscanf(limitStr, "%d", &limit); err == nil && parsed == 1 && limit > 0 {
+            if limit > 1000 {
+                limit = 1000
+            }
+        }
+    }
 
-	// 查询高风险事件
-	events, err := s.db.GetEvents(limit, 0, "HIGH", "", "")
-	if err != nil {
-		log.Printf("Failed to get high risk events: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+    // 查询高风险事件
+    events, err := s.db.GetEvents(limit, 0, "HIGH", "", "")
+    if err != nil {
+        log.Printf("Failed to get high risk events: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(events)
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(events)
 }
 
+// handleTimelineReconstruction 处理时间线重建请求
+func (s *Server) handleTimelineReconstruction(w http.ResponseWriter, r *http.Request) {
+    query := r.URL.Query()
+    
+    // 获取参数
+    pidStr := query.Get("pid")
+    timeWindow := 10 // 默认10分钟
+    
+    if timeWindowStr := query.Get("time_window"); timeWindowStr != "" {
+        if parsed, err := fmt.Sscanf(timeWindowStr, "%d", &timeWindow); err == nil && parsed == 1 {
+            if timeWindow < 1 {
+                timeWindow = 1
+            } else if timeWindow > 60 {
+                timeWindow = 60
+            }
+        }
+    }
+    
+    if pidStr == "" {
+        http.Error(w, "Missing required parameter: pid", http.StatusBadRequest)
+        return
+    }
+    
+    var pid uint32
+    if _, err := fmt.Sscanf(pidStr, "%d", &pid); err != nil {
+        http.Error(w, "Invalid pid parameter", http.StatusBadRequest)
+        return
+    }
+    
+    // 计算时间范围
+    endTime := time.Now()
+    startTime := endTime.Add(-time.Duration(timeWindow) * time.Minute)
+    
+    // 查询该进程在指定时间范围内的所有事件
+    events, err := s.db.GetProcessTimeline(pid, startTime.UnixNano(), endTime.UnixNano())
+    if err != nil {
+        log.Printf("Failed to get timeline: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+    
+    // 构建响应
+    response := map[string]interface{}{
+        "pid":         pid,
+        "start_time":  startTime.Format(time.RFC3339),
+        "end_time":    endTime.Format(time.RFC3339),
+        "time_window": timeWindow,
+        "total_events": len(events),
+        "events":      events,
+    }
+    
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(response)
+}
+
+// handlePrivilegeEscalationTimeline 处理提权事件时间线重建
+func (s *Server) handlePrivilegeEscalationTimeline(w http.ResponseWriter, r *http.Request) {
+    query := r.URL.Query()
+    
+    // 获取参数
+    eventIDStr := query.Get("event_id")
+    timeWindow := 10 // 默认10分钟
+    
+    if timeWindowStr := query.Get("time_window"); timeWindowStr != "" {
+        if parsed, err := fmt.Sscanf(timeWindowStr, "%d", &timeWindow); err == nil && parsed == 1 {
+            if timeWindow < 1 {
+                timeWindow = 1
+            } else if timeWindow > 60 {
+                timeWindow = 60
+            }
+        }
+    }
+    
+    if eventIDStr == "" {
+        http.Error(w, "Missing required parameter: event_id", http.StatusBadRequest)
+        return
+    }
+    
+    var eventID int
+    if _, err := fmt.Sscanf(eventIDStr, "%d", &eventID); err != nil {
+        http.Error(w, "Invalid event_id parameter", http.StatusBadRequest)
+        return
+    }
+    
+    // 查询指定的事件
+    events, err := s.db.GetEventByID(eventID)
+    if err != nil {
+        log.Printf("Failed to get event: %v", err)
+        http.Error(w, "Event not found", http.StatusNotFound)
+        return
+    }
+    
+    // 计算时间范围（提权事件发生前的时间段）
+    eventTime := time.Unix(0, int64(events[0].Timestamp))
+    startTime := eventTime.Add(-time.Duration(timeWindow) * time.Minute)
+    endTime := eventTime
+    
+    // 查询该进程在指定时间范围内的所有事件
+    timeline, err := s.db.GetProcessTimeline(events[0].Pid, startTime.UnixNano(), endTime.UnixNano())
+    if err != nil {
+        log.Printf("Failed to get timeline: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+    
+    // 构建响应
+    response := map[string]interface{}{
+        "escalation_event":  events[0],
+        "pid":              events[0].Pid,
+        "start_time":       startTime.Format(time.RFC3339),
+        "escalation_time":  eventTime.Format(time.RFC3339),
+        "time_window":      timeWindow,
+        "total_events":     len(timeline),
+        "timeline_events":  timeline,
+    }
+    
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(response)
+}
 // handleRoot 处理根路径，重定向到仪表板
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/static/dashboard.html", http.StatusMovedPermanently)
@@ -368,13 +495,15 @@ func main() {
 	r.HandleFunc("/api/events/recent/{limit}", server.handleRecentEvents).Methods("GET")
 	r.HandleFunc("/api/statistics", server.handleStatistics).Methods("GET")
 	r.HandleFunc("/api/high-risk-events", server.handleHighRiskEvents).Methods("GET")
+	r.HandleFunc("/api/timeline/reconstruct", server.handleTimelineReconstruction).Methods("GET")
+	r.HandleFunc("/api/timeline/privilege-escalation", server.handlePrivilegeEscalationTimeline).Methods("GET")
 	r.HandleFunc("/api/health", server.handleHealth).Methods("GET")
 
 	// WebSocket 路由
 	r.HandleFunc("/ws", server.handleWebSocket)
 
 	// 静态文件服务（用于前端）
-	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("./static"))))
+	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("./server/static"))))
 
 	// 启动服务器
 	addr := ":8080"

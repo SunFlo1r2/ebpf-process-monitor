@@ -11,6 +11,10 @@ enum event_type {
     EVENT_EXECVE = 0,           // execve 系统调用
     EVENT_SETUID = 1,           // setuid 权限变更
     EVENT_FILE_WRITE = 2,       // 文件写入操作
+    EVENT_OPENAT = 3,           // openat 文件打开操作
+    EVENT_CONNECT = 4,          // connect 网络连接
+    EVENT_BIND = 5,             // bind 端口绑定
+    EVENT_EXIT = 6,             // 进程退出
 };
 
 // 目标文件类型
@@ -37,6 +41,14 @@ struct process_event {
     __u8 is_privilege_escalation;
     __u8 event_type;            // 事件类型
     __u8 target_file_type;      // 目标文件类型
+    
+    // 网络连接相关字段
+    __be32 src_addr;            // 源IP地址
+    __be32 dst_addr;            // 目标IP地址
+    __u16 src_port;             // 源端口
+    __u16 dst_port;             // 目标端口
+    __u8 protocol;              // 协议类型 (TCP=6, UDP=17)
+    __u8 exit_code;             // 退出码 (用于EVENT_EXIT)
 };
 
 struct {
@@ -288,6 +300,277 @@ int BPF_PROG(handle_file_permission, struct file *file, int mask)
     }
     
     // 简化：暂时禁用文件监控，专注于权限提升检测
+    return 0;
+}
+
+// Tracepoint：监控 openat 系统调用（用于追踪文件访问）
+SEC("tracepoint/syscalls/sys_enter_openat")
+int trace_openat(struct trace_event_raw_sys_enter *ctx)
+{
+    struct process_event *event;
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 pid = pid_tgid >> 32;
+    __u64 uid_gid = bpf_get_current_uid_gid();
+    __u32 uid = uid_gid & 0xFFFFFFFF;
+    __u32 gid = uid_gid >> 32;
+    
+    // 只追踪root权限进程或SUID进程
+    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+    struct cred *cred;
+    __u32 euid = 0;
+    
+    if (bpf_probe_read_kernel(&cred, sizeof(cred), &task->cred) != 0) {
+        return 0;
+    }
+    
+    bpf_probe_read_kernel(&euid, sizeof(euid), &cred->euid.val);
+    
+    // 只追踪root进程或权限提升的进程
+    if (euid != 0 && euid == uid) {
+        return 0;
+    }
+    
+    event = bpf_ringbuf_reserve(&events, sizeof(struct process_event), 0);
+    if (!event) {
+        return 0;
+    }
+    
+    // 读取文件路径
+    const char *filename_ptr = (const char *)ctx->args[1];
+    char filename[MAX_PATH_LEN] = {0};
+    if (filename_ptr) {
+        bpf_probe_read_user_str(filename, sizeof(filename), filename_ptr);
+    }
+    
+    event->timestamp = bpf_ktime_get_ns();
+    event->pid = pid;
+    event->ppid = get_ppid();
+    event->uid = uid;
+    event->gid = gid;
+    event->euid = euid;
+    event->egid = 0;
+    event->old_uid = uid;
+    event->new_uid = euid;
+    event->is_privilege_escalation = (euid != uid) ? 1 : 0;
+    event->event_type = EVENT_OPENAT;
+    event->target_file_type = FILE_NONE;
+    
+    // 网络相关字段初始化
+    event->src_addr = 0;
+    event->dst_addr = 0;
+    event->src_port = 0;
+    event->dst_port = 0;
+    event->protocol = 0;
+    event->exit_code = 0;
+    
+    bpf_get_current_comm(&event->comm, sizeof(event->comm));
+    __builtin_memcpy(event->filepath, filename, sizeof(event->filepath));
+    __builtin_memset(event->filename, 0, sizeof(event->filename));
+    
+    bpf_ringbuf_submit(event, 0);
+    return 0;
+}
+
+// Tracepoint：监控 connect 系统调用（用于追踪网络连接）
+SEC("tracepoint/syscalls/sys_enter_connect")
+int trace_connect(struct trace_event_raw_sys_enter *ctx)
+{
+    struct process_event *event;
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 pid = pid_tgid >> 32;
+    __u64 uid_gid = bpf_get_current_uid_gid();
+    __u32 uid = uid_gid & 0xFFFFFFFF;
+    __u32 gid = uid_gid >> 32;
+    
+    // 只追踪root权限进程或SUID进程
+    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+    struct cred *cred;
+    __u32 euid = 0;
+    
+    if (bpf_probe_read_kernel(&cred, sizeof(cred), &task->cred) != 0) {
+        return 0;
+    }
+    
+    bpf_probe_read_kernel(&euid, sizeof(euid), &cred->euid.val);
+    
+    // 只追踪root进程或权限提升的进程
+    if (euid != 0 && euid == uid) {
+        return 0;
+    }
+    
+    event = bpf_ringbuf_reserve(&events, sizeof(struct process_event), 0);
+    if (!event) {
+        return 0;
+    }
+    
+    // 读取socket地址
+    struct sockaddr_in *addr_in = (struct sockaddr_in *)ctx->args[1];
+    __be32 dst_addr = 0;
+    __u16 dst_port = 0;
+    
+    if (addr_in) {
+        bpf_probe_read_kernel(&dst_addr, sizeof(dst_addr), &addr_in->sin_addr.s_addr);
+        bpf_probe_read_kernel(&dst_port, sizeof(dst_port), &addr_in->sin_port);
+    }
+    
+    event->timestamp = bpf_ktime_get_ns();
+    event->pid = pid;
+    event->ppid = get_ppid();
+    event->uid = uid;
+    event->gid = gid;
+    event->euid = euid;
+    event->egid = 0;
+    event->old_uid = uid;
+    event->new_uid = euid;
+    event->is_privilege_escalation = (euid != uid) ? 1 : 0;
+    event->event_type = EVENT_CONNECT;
+    event->target_file_type = FILE_NONE;
+    
+    // 网络连接信息
+    event->src_addr = 0;
+    event->dst_addr = dst_addr;
+    event->src_port = 0;
+    event->dst_port = dst_port;
+    event->protocol = 6; // TCP
+    event->exit_code = 0;
+    
+    bpf_get_current_comm(&event->comm, sizeof(event->comm));
+    __builtin_memset(event->filename, 0, sizeof(event->filename));
+    __builtin_memset(event->filepath, 0, sizeof(event->filepath));
+    
+    bpf_ringbuf_submit(event, 0);
+    return 0;
+}
+
+// Tracepoint：监控 bind 系统调用（用于追踪端口绑定）
+SEC("tracepoint/syscalls/sys_enter_bind")
+int trace_bind(struct trace_event_raw_sys_enter *ctx)
+{
+    struct process_event *event;
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 pid = pid_tgid >> 32;
+    __u64 uid_gid = bpf_get_current_uid_gid();
+    __u32 uid = uid_gid & 0xFFFFFFFF;
+    __u32 gid = uid_gid >> 32;
+    
+    // 只追踪root权限进程或SUID进程
+    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+    struct cred *cred;
+    __u32 euid = 0;
+    
+    if (bpf_probe_read_kernel(&cred, sizeof(cred), &task->cred) != 0) {
+        return 0;
+    }
+    
+    bpf_probe_read_kernel(&euid, sizeof(euid), &cred->euid.val);
+    
+    // 只追踪root进程或权限提升的进程
+    if (euid != 0 && euid == uid) {
+        return 0;
+    }
+    
+    event = bpf_ringbuf_reserve(&events, sizeof(struct process_event), 0);
+    if (!event) {
+        return 0;
+    }
+    
+    // 读取socket地址
+    struct sockaddr_in *addr_in = (struct sockaddr_in *)ctx->args[1];
+    __be32 src_addr = 0;
+    __u16 src_port = 0;
+    
+    if (addr_in) {
+        bpf_probe_read_kernel(&src_addr, sizeof(src_addr), &addr_in->sin_addr.s_addr);
+        bpf_probe_read_kernel(&src_port, sizeof(src_port), &addr_in->sin_port);
+    }
+    
+    event->timestamp = bpf_ktime_get_ns();
+    event->pid = pid;
+    event->ppid = get_ppid();
+    event->uid = uid;
+    event->gid = gid;
+    event->euid = euid;
+    event->egid = 0;
+    event->old_uid = uid;
+    event->new_uid = euid;
+    event->is_privilege_escalation = (euid != uid) ? 1 : 0;
+    event->event_type = EVENT_BIND;
+    event->target_file_type = FILE_NONE;
+    
+    // 网络连接信息
+    event->src_addr = src_addr;
+    event->dst_addr = 0;
+    event->src_port = src_port;
+    event->dst_port = 0;
+    event->protocol = 6; // TCP
+    event->exit_code = 0;
+    
+    bpf_get_current_comm(&event->comm, sizeof(event->comm));
+    __builtin_memset(event->filename, 0, sizeof(event->filename));
+    __builtin_memset(event->filepath, 0, sizeof(event->filepath));
+    
+    bpf_ringbuf_submit(event, 0);
+    return 0;
+}
+
+// Tracepoint：监控 exit 系统调用（用于追踪进程退出）
+SEC("tracepoint/syscalls/sys_exit_exit")
+int trace_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    struct process_event *event;
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 pid = pid_tgid >> 32;
+    __u64 uid_gid = bpf_get_current_uid_gid();
+    __u32 uid = uid_gid & 0xFFFFFFFF;
+    __u32 gid = uid_gid >> 32;
+    
+    // 只追踪root权限进程或SUID进程
+    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+    struct cred *cred;
+    __u32 euid = 0;
+    
+    if (bpf_probe_read_kernel(&cred, sizeof(cred), &task->cred) != 0) {
+        return 0;
+    }
+    
+    bpf_probe_read_kernel(&euid, sizeof(euid), &cred->euid.val);
+    
+    // 只追踪root进程或权限提升的进程
+    if (euid != 0 && euid == uid) {
+        return 0;
+    }
+    
+    event = bpf_ringbuf_reserve(&events, sizeof(struct process_event), 0);
+    if (!event) {
+        return 0;
+    }
+    
+    event->timestamp = bpf_ktime_get_ns();
+    event->pid = pid;
+    event->ppid = get_ppid();
+    event->uid = uid;
+    event->gid = gid;
+    event->euid = euid;
+    event->egid = 0;
+    event->old_uid = uid;
+    event->new_uid = euid;
+    event->is_privilege_escalation = (euid != uid) ? 1 : 0;
+    event->event_type = EVENT_EXIT;
+    event->target_file_type = FILE_NONE;
+    event->exit_code = ctx->ret; // 退出码
+    
+    // 网络相关字段初始化
+    event->src_addr = 0;
+    event->dst_addr = 0;
+    event->src_port = 0;
+    event->dst_port = 0;
+    event->protocol = 0;
+    
+    bpf_get_current_comm(&event->comm, sizeof(event->comm));
+    __builtin_memset(event->filename, 0, sizeof(event->filename));
+    __builtin_memset(event->filepath, 0, sizeof(event->filepath));
+    
+    bpf_ringbuf_submit(event, 0);
     return 0;
 }
 

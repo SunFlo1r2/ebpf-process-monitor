@@ -444,6 +444,217 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        
+        /* 时间线模态框样式 */
+        .timeline-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        .timeline-modal-content {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border-radius: 16px;
+            width: 90%;
+            max-width: 1000px;
+            max-height: 90vh;
+            overflow: hidden;
+            border: 1px solid rgba(102, 126, 234, 0.3);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+        
+        .timeline-modal-header {
+            background: rgba(102, 126, 234, 0.2);
+            padding: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(102, 126, 234, 0.3);
+        }
+        
+        .timeline-modal-header h2 {
+            font-size: 24px;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .timeline-close-btn {
+            background: rgba(220, 53, 69, 0.2);
+            border: 1px solid rgba(220, 53, 69, 0.3);
+            color: #dc3545;
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            font-size: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .timeline-close-btn:hover {
+            background: rgba(220, 53, 69, 0.4);
+            transform: scale(1.1);
+        }
+        
+        .timeline-modal-body {
+            padding: 24px;
+            overflow-y: auto;
+            max-height: calc(90vh - 100px);
+        }
+        
+        .timeline-info {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 24px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+        
+        .timeline-info-item {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .info-label {
+            color: #a0a0a0;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .info-value {
+            color: #e0e0e0;
+            font-size: 16px;
+            font-weight: 600;
+        }
+        
+        .timeline-events {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+            padding: 24px;
+        }
+        
+        .timeline-title {
+            font-size: 20px;
+            margin-bottom: 20px;
+            color: #667eea;
+            font-weight: 700;
+        }
+        
+        .timeline-event {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            animation: slideIn 0.3s ease;
+        }
+        
+        .timeline-event:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+        
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
+        .timeline-time {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 100px;
+        }
+        
+        .timeline-icon {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+        
+        .timeline-diff {
+            font-size: 12px;
+            color: #a0a0a0;
+            font-weight: 600;
+        }
+        
+        .timeline-content {
+            flex: 1;
+        }
+        
+        .timeline-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+        
+        .timeline-header strong {
+            font-size: 16px;
+            color: #e0e0e0;
+        }
+        
+        .timeline-detail {
+            color: #a0a0a0;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        
+        .timeline-meta {
+            display: flex;
+            gap: 16px;
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .timeline-empty {
+            text-align: center;
+            padding: 40px;
+            color: #a0a0a0;
+        }
+        
+        /* 时间线按钮样式 */
+        .timeline-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        
+        .timeline-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
     </style>
 </head>
 <body>
@@ -720,6 +931,11 @@
                     ${eventTypeBadge}
                     ${privilegeBadge}
                 </div>
+                ${event.is_privilege_escalation ? `
+                    <button class="timeline-btn" onclick='showTimeline(${JSON.stringify(event)})'>
+                        📊 查看时间线
+                    </button>
+                ` : ''}
             `;
 
             return eventItem;
@@ -831,6 +1047,201 @@
             }
         }
 
+        // 时间线重建功能
+        async function showTimeline(event) {
+            if (!event.id) {
+                alert('事件ID缺失，无法重建时间线');
+                return;
+            }
+
+            const timeWindow = prompt('请输入时间窗口（分钟）:', '10');
+            if (!timeWindow) return;
+
+            const windowMinutes = parseInt(timeWindow);
+            if (isNaN(windowMinutes) || windowMinutes < 1 || windowMinutes > 60) {
+                alert('时间窗口必须在1-60分钟之间');
+                return;
+            }
+
+            try {
+                const response = await fetch(`http://${window.location.host}/api/timeline/privilege-escalation?event_id=${event.id}&time_window=${windowMinutes}`);
+                const data = await response.json();
+
+                if (data.error) {
+                    alert('获取时间线失败: ' + data.error);
+                    return;
+                }
+
+                displayTimelineModal(data);
+            } catch (error) {
+                console.error('Failed to get timeline:', error);
+                alert('获取时间线失败');
+            }
+        }
+
+        // 显示时间线模态框
+        function displayTimelineModal(data) {
+            // 移除旧模态框
+            const oldModal = document.getElementById('timelineModal');
+            if (oldModal) {
+                oldModal.remove();
+            }
+
+            // 创建模态框
+            const modal = document.createElement('div');
+            modal.id = 'timelineModal';
+            modal.className = 'timeline-modal';
+            
+            const escalationTime = new Date(data.escalation_event.timestamp / 1000000);
+            const startTime = new Date(data.start_time);
+            
+            // 生成时间线HTML
+            let timelineHTML = '';
+            if (data.timeline_events && data.timeline_events.length > 0) {
+                timelineHTML = data.timeline_events.map(event => {
+                    const eventTime = new Date(event.timestamp / 1000000);
+                    const timeDiff = Math.round((eventTime.getTime() - startTime.getTime()) / 1000);
+                    
+                    let eventTypeBadge = '';
+                    let eventIcon = '';
+                    let eventDesc = '';
+                    
+                    switch(event.event_type) {
+                        case 0: // EXECVE
+                            eventTypeBadge = '<span class="badge badge-execve">EXECVE</span>';
+                            eventIcon = '🚀';
+                            eventDesc = `执行: ${event.filename || '未知文件'}`;
+                            break;
+                        case 1: // SETUID
+                            eventTypeBadge = '<span class="badge badge-setuid">SETUID</span>';
+                            eventIcon = '🔐';
+                            eventDesc = `权限变更: ${event.old_uid} → ${event.new_uid}`;
+                            break;
+                        case 2: // FILE_WRITE
+                            eventTypeBadge = '<span class="badge badge-file-write">FILE_WRITE</span>';
+                            eventIcon = '📝';
+                            eventDesc = `写入文件: ${event.filepath || event.filename || '未知文件'}`;
+                            break;
+                        case 3: // OPENAT
+                            eventTypeBadge = '<span class="badge" style="background: #17a2b8;">OPENAT</span>';
+                            eventIcon = '📂';
+                            eventDesc = `打开文件: ${event.filepath || '未知路径'}`;
+                            break;
+                        case 4: // CONNECT
+                            eventTypeBadge = '<span class="badge" style="background: #e83e8c;">CONNECT</span>';
+                            eventIcon = '🌐';
+                            eventDesc = `网络连接: ${event.src_addr}:${event.src_port} → ${event.dst_addr}:${event.dst_port}`;
+                            break;
+                        case 5: // BIND
+                            eventTypeBadge = '<span class="badge" style="background: #6f42c1;">BIND</span>';
+                            eventIcon = '🔌';
+                            eventDesc = `绑定端口: ${event.src_addr}:${event.src_port}`;
+                            break;
+                        case 6: // EXIT
+                            eventTypeBadge = '<span class="badge" style="background: #6c757d;">EXIT</span>';
+                            eventIcon = '🚪';
+                            eventDesc = `进程退出 (退出码: ${event.exit_code})`;
+                            break;
+                        default:
+                            eventTypeBadge = '<span class="badge">UNKNOWN</span>';
+                            eventIcon = '❓';
+                            eventDesc = '未知事件';
+                    }
+
+                    return `
+                        <div class="timeline-event">
+                            <div class="timeline-time">
+                                <span class="timeline-icon">${eventIcon}</span>
+                                <span class="timeline-diff">${formatTimeDiff(timeDiff)}</span>
+                            </div>
+                            <div class="timeline-content">
+                                <div class="timeline-header">
+                                    <strong>${event.comm}</strong>
+                                    ${eventTypeBadge}
+                                </div>
+                                <div class="timeline-detail">${eventDesc}</div>
+                                <div class="timeline-meta">
+                                    <span>🕐 ${eventTime.toLocaleTimeString()}</span>
+                                    <span>📊 PID: ${event.pid}</span>
+                                    <span>👤 UID: ${event.uid}</span>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                timelineHTML = '<div class="timeline-empty">暂无事件记录</div>';
+            }
+
+            modal.innerHTML = `
+                <div class="timeline-modal-content">
+                    <div class="timeline-modal-header">
+                        <h2>📊 提权事件时间线重建</h2>
+                        <button class="timeline-close-btn" onclick="closeTimelineModal()">✕</button>
+                    </div>
+                    <div class="timeline-modal-body">
+                        <div class="timeline-info">
+                            <div class="timeline-info-item">
+                                <span class="info-label">进程ID:</span>
+                                <span class="info-value">${data.pid}</span>
+                            </div>
+                            <div class="timeline-info-item">
+                                <span class="info-label">开始时间:</span>
+                                <span class="info-value">${startTime.toLocaleString('zh-CN')}</span>
+                            </div>
+                            <div class="timeline-info-item">
+                                <span class="info-label">提权时间:</span>
+                                <span class="info-value" style="color: #dc3545; font-weight: bold;">${escalationTime.toLocaleString('zh-CN')}</span>
+                            </div>
+                            <div class="timeline-info-item">
+                                <span class="info-label">时间窗口:</span>
+                                <span class="info-value">${data.time_window} 分钟</span>
+                            </div>
+                            <div class="timeline-info-item">
+                                <span class="info-label">事件总数:</span>
+                                <span class="info-value">${data.total_events}</span>
+                            </div>
+                        </div>
+                        <div class="timeline-events">
+                            <div class="timeline-title">事件时间线</div>
+                            ${timelineHTML}
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+        }
+
+        // 格式化时间差
+        function formatTimeDiff(seconds) {
+            if (seconds < 60) {
+                return `${seconds}秒前`;
+            } else if (seconds < 3600) {
+                const minutes = Math.floor(seconds / 60);
+                const secs = seconds % 60;
+                return `${minutes}分${secs}秒前`;
+            } else {
+                return `${Math.floor(seconds / 3600)}小时前`;
+            }
+        }
+
+        // 关闭时间线模态框
+        function closeTimelineModal() {
+            const modal = document.getElementById('timelineModal');
+            if (modal) {
+                modal.remove();
+            }
+        }
+
+        // 点击模态框外部关闭
+        document.addEventListener('click', function(e) {
+            const modal = document.getElementById('timelineModal');
+            if (modal && e.target === modal) {
+                closeTimelineModal();
+            }
+        });
+
         // 渲染表格视图（使用 React）
         function renderTableView() {
             const root = document.getElementById('react-table-root');
@@ -849,7 +1260,8 @@
                             React.createElement('th', null, '时间'),
                             React.createElement('th', null, '事件类型'),
                             React.createElement('th', null, '权限提升'),
-                            React.createElement('th', null, '风险等级')
+                            React.createElement('th', null, '风险等级'),
+                            React.createElement('th', null, '操作')
                         )
                     ),
                     React.createElement('tbody', null,

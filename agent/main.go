@@ -39,6 +39,14 @@ type ProcessEvent struct {
     IsPrivilegeEscalation uint8
     EventType             uint8  // 事件类型
     TargetFileType        uint8  // 目标文件类型
+    
+    // 网络连接相关字段
+    SrcAddr               uint32  // 源IP地址
+    DstAddr               uint32  // 目标IP地址
+    SrcPort               uint16  // 源端口
+    DstPort               uint16  // 目标端口
+    Protocol              uint8   // 协议类型 (TCP=6, UDP=17)
+    ExitCode              uint8   // 退出码 (用于EVENT_EXIT)
 }
 
 // ServerEvent 用于发送到服务器的事件格式
@@ -58,6 +66,14 @@ type ServerEvent struct {
     IsPrivilegeEscalation bool   `json:"is_privilege_escalation"`
     EventType             uint8  `json:"event_type"`
     TargetFileType        uint8  `json:"target_file_type"`
+    
+    // 网络连接相关字段
+    SrcAddr               uint32 `json:"src_addr"`
+    DstAddr               uint32 `json:"dst_addr"`
+    SrcPort               uint16 `json:"src_port"`
+    DstPort               uint16 `json:"dst_port"`
+    Protocol              uint8  `json:"protocol"`
+    ExitCode              uint8  `json:"exit_code"`
 }
 
 const serverURL = "http://localhost:8080/api/events"
@@ -132,6 +148,14 @@ func sendEventToServer(event *ProcessEvent) {
         IsPrivilegeEscalation: event.IsPrivilegeEscalation == 1,
         EventType:             event.EventType,
         TargetFileType:        event.TargetFileType,
+        
+        // 网络连接相关字段
+        SrcAddr:               event.SrcAddr,
+        DstAddr:               event.DstAddr,
+        SrcPort:               event.SrcPort,
+        DstPort:               event.DstPort,
+        Protocol:              event.Protocol,
+        ExitCode:              event.ExitCode,
     }
 
     jsonData, err := json.Marshal(serverEvent)
@@ -339,6 +363,16 @@ func main() {
         case 2: // EVENT_FILE_WRITE
             targetFile := string(bytes.Trim(event.Filepath[:], "\x00"))
             eventDesc = fmt.Sprintf("FILE_WRITE: %s", targetFile)
+        case 3: // EVENT_OPENAT
+            filepath := string(bytes.Trim(event.Filepath[:], "\x00"))
+            eventDesc = fmt.Sprintf("OPENAT: %s", filepath)
+        case 4: // EVENT_CONNECT
+            eventDesc = fmt.Sprintf("CONNECT: %d:%d -> %d:%d", 
+                event.SrcAddr, event.SrcPort, event.DstAddr, event.DstPort)
+        case 5: // EVENT_BIND
+            eventDesc = fmt.Sprintf("BIND: %d:%d", event.SrcAddr, event.SrcPort)
+        case 6: // EVENT_EXIT
+            eventDesc = fmt.Sprintf("EXIT: code=%d", event.ExitCode)
         default:
             eventDesc = "UNKNOWN"
         }

@@ -63,7 +63,15 @@ func initSchema(db *sql.DB) error {
 		risk_level TEXT NOT NULL DEFAULT 'LOW',
 		agent_id TEXT DEFAULT 'default',
 		fingerprint TEXT UNIQUE,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		
+		-- 网络连接相关字段
+		src_addr INTEGER DEFAULT 0,
+		dst_addr INTEGER DEFAULT 0,
+		src_port INTEGER DEFAULT 0,
+		dst_port INTEGER DEFAULT 0,
+		protocol INTEGER DEFAULT 0,
+		exit_code INTEGER DEFAULT 0
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_timestamp ON security_events(timestamp);
@@ -83,12 +91,19 @@ func (d *Database) InsertEvent(event ProcessEvent, riskLevel RiskLevel, fingerpr
 	INSERT INTO security_events (
 		timestamp, pid, ppid, uid, gid, euid, egid, old_uid, new_uid,
 		comm, filename, filepath, is_privilege_escalation, event_type,
-		target_file_type, risk_level, agent_id, fingerprint
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		target_file_type, risk_level, agent_id, fingerprint,
+		src_addr, dst_addr, src_port, dst_port, protocol, exit_code
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(fingerprint) DO UPDATE SET
 		timestamp = excluded.timestamp,
 		risk_level = excluded.risk_level,
-		created_at = CURRENT_TIMESTAMP
+		created_at = CURRENT_TIMESTAMP,
+		src_addr = excluded.src_addr,
+		dst_addr = excluded.dst_addr,
+		src_port = excluded.src_port,
+		dst_port = excluded.dst_port,
+		protocol = excluded.protocol,
+		exit_code = excluded.exit_code
 	`
 
 	_, err := d.db.Exec(query,
@@ -110,6 +125,12 @@ func (d *Database) InsertEvent(event ProcessEvent, riskLevel RiskLevel, fingerpr
 		string(riskLevel),
 		agentID,
 		fingerprint,
+		event.SrcAddr,
+		event.DstAddr,
+		event.SrcPort,
+		event.DstPort,
+		event.Protocol,
+		event.ExitCode,
 	)
 
 	return err
@@ -120,7 +141,8 @@ func (d *Database) GetEvents(limit, offset int, riskLevel, eventType, agentID st
 	query := `
 	SELECT id, timestamp, pid, ppid, uid, gid, euid, egid, old_uid, new_uid,
 		comm, filename, filepath, is_privilege_escalation, event_type,
-		target_file_type, risk_level, agent_id, created_at
+		target_file_type, risk_level, agent_id, created_at,
+		src_addr, dst_addr, src_port, dst_port, protocol, exit_code
 	FROM security_events
 	WHERE 1=1
 	`
@@ -180,6 +202,12 @@ func (d *Database) GetEvents(limit, offset int, riskLevel, eventType, agentID st
 			&event.RiskLevel,
 			&event.AgentID,
 			&createdAt,
+			&event.SrcAddr,
+			&event.DstAddr,
+			&event.SrcPort,
+			&event.DstPort,
+			&event.Protocol,
+			&event.ExitCode,
 		)
 		if err != nil {
 			return nil, err
@@ -197,7 +225,8 @@ func (d *Database) GetEventByFingerprint(fingerprint string) (*ProcessEventWithR
 	query := `
 	SELECT id, timestamp, pid, ppid, uid, gid, euid, egid, old_uid, new_uid,
 		comm, filename, filepath, is_privilege_escalation, event_type,
-		target_file_type, risk_level, agent_id, created_at
+		target_file_type, risk_level, agent_id, created_at,
+		src_addr, dst_addr, src_port, dst_port, protocol, exit_code
 	FROM security_events
 	WHERE fingerprint = ?
 	`
@@ -225,6 +254,12 @@ func (d *Database) GetEventByFingerprint(fingerprint string) (*ProcessEventWithR
 		&event.RiskLevel,
 		&event.AgentID,
 		&createdAt,
+		&event.SrcAddr,
+		&event.DstAddr,
+		&event.SrcPort,
+		&event.DstPort,
+		&event.Protocol,
+		&event.ExitCode,
 	)
 
 	if err != nil {
@@ -292,6 +327,14 @@ func (d *Database) GetEventStatistics() (*EventStatistics, error) {
 			typeName = "SETUID"
 		case 2:
 			typeName = "FILE_WRITE"
+		case 3:
+			typeName = "OPENAT"
+		case 4:
+			typeName = "CONNECT"
+		case 5:
+			typeName = "BIND"
+		case 6:
+			typeName = "EXIT"
 		default:
 			typeName = "UNKNOWN"
 		}
@@ -308,6 +351,117 @@ func (d *Database) GetEventStatistics() (*EventStatistics, error) {
 	}
 
 	return stats, nil
+}
+
+// GetProcessTimeline 获取指定进程在指定时间范围内的事件
+func (d *Database) GetProcessTimeline(pid uint32, startTime, endTime int64) ([]ProcessEventWithRisk, error) {
+	query := `
+	SELECT id, timestamp, pid, ppid, uid, gid, euid, egid, old_uid, new_uid,
+		comm, filename, filepath, is_privilege_escalation, event_type,
+		target_file_type, risk_level, agent_id, created_at,
+		src_addr, dst_addr, src_port, dst_port, protocol, exit_code
+	FROM security_events
+	WHERE pid = ? AND timestamp BETWEEN ? AND ?
+	ORDER BY timestamp ASC
+	`
+
+	rows, err := d.db.Query(query, pid, startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []ProcessEventWithRisk
+	for rows.Next() {
+		var event ProcessEventWithRisk
+		var createdAt time.Time
+
+		err := rows.Scan(
+			&event.ID,
+			&event.Timestamp,
+			&event.Pid,
+			&event.Ppid,
+			&event.Uid,
+			&event.Gid,
+			&event.Euid,
+			&event.Egid,
+			&event.OldUid,
+			&event.NewUid,
+			&event.Comm,
+			&event.Filename,
+			&event.Filepath,
+			&event.IsPrivilegeEscalation,
+			&event.EventType,
+			&event.TargetFileType,
+			&event.RiskLevel,
+			&event.AgentID,
+			&createdAt,
+			&event.SrcAddr,
+			&event.DstAddr,
+			&event.SrcPort,
+			&event.DstPort,
+			&event.Protocol,
+			&event.ExitCode,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		event.CreatedAt = createdAt.Format(time.RFC3339)
+		events = append(events, event)
+	}
+
+	return events, nil
+}
+
+// GetEventByID 根据ID获取事件
+func (d *Database) GetEventByID(eventID int) ([]ProcessEventWithRisk, error) {
+	query := `
+	SELECT id, timestamp, pid, ppid, uid, gid, euid, egid, old_uid, new_uid,
+		comm, filename, filepath, is_privilege_escalation, event_type,
+		target_file_type, risk_level, agent_id, created_at,
+		src_addr, dst_addr, src_port, dst_port, protocol, exit_code
+	FROM security_events
+	WHERE id = ?
+	`
+
+	var event ProcessEventWithRisk
+	var createdAt time.Time
+
+	err := d.db.QueryRow(query, eventID).Scan(
+		&event.ID,
+		&event.Timestamp,
+		&event.Pid,
+		&event.Ppid,
+		&event.Uid,
+		&event.Gid,
+		&event.Euid,
+		&event.Egid,
+		&event.OldUid,
+		&event.NewUid,
+		&event.Comm,
+		&event.Filename,
+		&event.Filepath,
+		&event.IsPrivilegeEscalation,
+		&event.EventType,
+		&event.TargetFileType,
+		&event.RiskLevel,
+		&event.AgentID,
+		&createdAt,
+		&event.SrcAddr,
+		&event.DstAddr,
+		&event.SrcPort,
+		&event.DstPort,
+		&event.Protocol,
+		&event.ExitCode,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	event.CreatedAt = createdAt.Format(time.RFC3339)
+	return []ProcessEventWithRisk{event}, nil
 }
 
 // ProcessEventWithRisk 包含风险等级的事件
@@ -331,6 +485,14 @@ type ProcessEventWithRisk struct {
 	RiskLevel               string    `json:"risk_level"`
 	AgentID                 string    `json:"agent_id"`
 	CreatedAt               string    `json:"created_at"`
+	
+	// 网络连接相关字段
+	SrcAddr                 uint32    `json:"src_addr"`
+	DstAddr                 uint32    `json:"dst_addr"`
+	SrcPort                 uint16    `json:"src_port"`
+	DstPort                 uint16    `json:"dst_port"`
+	Protocol                uint8     `json:"protocol"`
+	ExitCode                uint8     `json:"exit_code"`
 }
 
 // EventStatistics 事件统计信息
