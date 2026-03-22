@@ -32,7 +32,7 @@ func (ra *RiskAnalyzer) Evaluate(event ProcessEvent) RiskLevel {
 	// 1. 检查是否是真正的权限提升（从普通用户提升到 root）
 	// 条件：UID != 0 && EUID == 0
 	isRealPrivilegeEscalation := (event.Uid != 0 && event.Euid == 0)
-	
+
 	if isRealPrivilegeEscalation {
 		score += 20
 	} else if event.IsPrivilegeEscalation {
@@ -61,6 +61,34 @@ func (ra *RiskAnalyzer) Evaluate(event ProcessEvent) RiskLevel {
 		if event.TargetFileType == 1 || event.TargetFileType == 2 { // PASSWD or SHADOW
 			score += 35
 		}
+	case 3: // OPENAT
+		// 检查敏感文件访问
+		if isSensitiveFileAccess(event.TargetFileType) {
+			score += 20
+		}
+	case 4: // CONNECT
+		// 检测反向Shell：shell进程建立出站连接
+		if isReverseShell(event.Comm) {
+			score += 40 // 反向Shell是极高风险
+		}
+		// 检测可疑工具
+		if isSuspiciousTool(event.Comm) {
+			score += 25
+		}
+		// 检测非标准端口连接
+		if isUnusualPort(event.DstPort) {
+			score += 15
+		}
+	case 5: // BIND
+		// 绑定特权端口（<1024）是高风险
+		if event.SrcPort > 0 && event.SrcPort < 1024 {
+			score += 20
+		}
+	case 6: // EXIT
+		// 检测异常退出码
+		if event.ExitCode != 0 {
+			score += 5
+		}
 	}
 
 	// 3. 时间因素：非工作时间（晚上10点到早上6点）的事件风险更高
@@ -74,7 +102,7 @@ func (ra *RiskAnalyzer) Evaluate(event ProcessEvent) RiskLevel {
 	// 如果是 root 用户执行（UID=0, EUID=0），且不是真正的权限提升
 	// 且不是高风险程序，则大幅降低风险评分
 	if event.Uid == 0 && event.Euid == 0 && !isRealPrivilegeEscalation {
-		if !isHighRiskProgram(event.Comm) && !isSensitivePath(event.Filename) {
+		if !isHighRiskProgram(event.Comm) && !isSensitivePath(event.Filename) && !isReverseShell(event.Comm) {
 			// root 用户执行的常规程序，极低风险
 			score = 0
 		} else if isHighRiskProgram(event.Comm) {
@@ -203,4 +231,87 @@ func (ed *EventDeduplicator) GenerateFingerprint(event ProcessEvent) string {
 func (ed *EventDeduplicator) ShouldDeduplicate(event ProcessEvent, lastSeenTime time.Time) bool {
 	// 如果上次看到的时间在时间窗口内，则去重
 	return time.Since(lastSeenTime) < ed.timeWindow
+}
+
+// isReverseShell 检测是否是反向Shell
+// shell进程建立出站连接可能是反向Shell攻击
+func isReverseShell(comm string) bool {
+	shellPatterns := []string{"bash", "sh", "zsh", "dash", "tcsh", "csh", "fish"}
+	commLower := strings.ToLower(comm)
+	
+	for _, pattern := range shellPatterns {
+		if commLower == pattern || strings.HasPrefix(commLower, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// isSuspiciousTool 检测是否是可疑工具
+// 这些工具可能被攻击者用于网络侦察或建立后门
+func isSuspiciousTool(comm string) bool {
+	suspiciousTools := []string{
+		"nc", "netcat", "socat", "telnet", "ncat",
+		"wget", "curl", "fetch", "lynx",
+		"tftp", "ftp",
+		"nc.traditional", "nc.openbsd",
+	}
+	commLower := strings.ToLower(comm)
+	
+	for _, tool := range suspiciousTools {
+		if commLower == tool || strings.Contains(commLower, tool) {
+			return true
+		}
+	}
+	return false
+}
+
+// isUnusualPort 检测是否是非常规端口
+// 检测连接到非常见端口（如4444, 5555, 6666, 12345等）的行为
+func isUnusualPort(port uint16) bool {
+	if port == 0 {
+		return false
+	}
+
+	// 常见服务端口
+	commonPorts := map[uint16]bool{
+		21:   true,  // FTP
+		22:   true,  // SSH
+		23:   true,  // Telnet
+		25:   true,  // SMTP
+		53:   true,  // DNS
+		80:   true,  // HTTP
+		110:  true,  // POP3
+		143:  true,  // IMAP
+		443:  true,  // HTTPS
+		3306: true,  // MySQL
+		3389: true,  // RDP
+		5432: true,  // PostgreSQL
+		8080: true,  // HTTP Alt
+	}
+
+	// 检查是否是常见端口
+	if commonPorts[port] {
+		return false
+	}
+
+	// 检查是否是常见攻击使用的端口
+	attackPorts := map[uint16]bool{
+		4444: true,  // Metasploit默认
+		5555: true,  // ADB
+		6666: true,  // 常用攻击端口
+		1234: true,  // 常用攻击端口
+		12345: true, // NetBus
+		31337: true, // Back Orifice
+	}
+
+	return attackPorts[port]
+}
+
+// isSensitiveFileAccess 检测是否访问敏感文件
+func isSensitiveFileAccess(targetFileType uint8) bool {
+	// 敏感文件类型（在eBPF代码中定义）
+	// FILE_SUDOERS = 3, FILE_CRONTAB = 4, FILE_SSH_CONFIG = 5,
+	// FILE_HOSTS = 6, FILE_SYSTEM_CONFIG = 7
+	return targetFileType >= 3 && targetFileType <= 7
 }

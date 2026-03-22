@@ -47,14 +47,15 @@ type EventStore struct {
 
 // Server 表示 HTTP 服务器
 type Server struct {
-	store           *EventStore
-	clients         map[*websocket.Conn]bool
-	clientsMutex    sync.RWMutex
-	upgrader        websocket.Upgrader
-	broadcastChan   chan ProcessEvent
-	db              *Database
-	riskAnalyzer    *RiskAnalyzer
-	deduplicator    *EventDeduplicator
+	store                 *EventStore
+	clients               map[*websocket.Conn]bool
+	clientsMutex          sync.RWMutex
+	upgrader              websocket.Upgrader
+	broadcastChan         chan ProcessEvent
+	db                    *Database
+	riskAnalyzer          *RiskAnalyzer
+	deduplicator          *EventDeduplicator
+	forensicReportGenerator *ForensicReportGenerator
 }
 
 // NewEventStore 创建新的事件存储
@@ -124,10 +125,11 @@ func NewServer(dbPath string) (*Server, error) {
 				return true // 允许所有来源
 			},
 		},
-		broadcastChan: make(chan ProcessEvent, 100),
-		db:           db,
-		riskAnalyzer: NewRiskAnalyzer(),
-		deduplicator: NewEventDeduplicator(),
+		broadcastChan:            make(chan ProcessEvent, 100),
+		db:                       db,
+		riskAnalyzer:             NewRiskAnalyzer(),
+		deduplicator:             NewEventDeduplicator(),
+		forensicReportGenerator:  NewForensicReportGenerator(db),
 	}, nil
 }
 
@@ -467,6 +469,69 @@ func (s *Server) handlePrivilegeEscalationTimeline(w http.ResponseWriter, r *htt
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(response)
 }
+
+// handleForensicReport 处理取证报告生成请求
+func (s *Server) handleForensicReport(w http.ResponseWriter, r *http.Request) {
+    query := r.URL.Query()
+    
+    // 获取参数
+    eventIDStr := query.Get("event_id")
+    format := ReportFormat(query.Get("format"))
+    
+    // 验证参数
+    if eventIDStr == "" {
+        http.Error(w, "Missing required parameter: event_id", http.StatusBadRequest)
+        return
+    }
+    
+    var eventID int
+    if _, err := fmt.Sscanf(eventIDStr, "%d", &eventID); err != nil {
+        http.Error(w, "Invalid event_id parameter", http.StatusBadRequest)
+        return
+    }
+    
+    // 设置默认格式为 JSON
+    if format == "" {
+        format = FormatJSON
+    }
+    
+    // 验证格式
+    if format != FormatText && format != FormatJSON && format != FormatMarkdown {
+        http.Error(w, "Invalid format parameter. Supported formats: text, json, markdown", http.StatusBadRequest)
+        return
+    }
+    
+    // 生成报告
+    report, err := s.forensicReportGenerator.GenerateReport(eventID, format)
+    if err != nil {
+        log.Printf("Failed to generate forensic report: %v", err)
+        if err.Error() == "event not found" {
+            http.Error(w, "Event not found", http.StatusNotFound)
+        } else {
+            http.Error(w, "Internal server error", http.StatusInternalServerError)
+        }
+        return
+    }
+    
+    // 根据格式设置响应头
+    switch format {
+    case FormatJSON:
+        w.Header().Set("Content-Type", "application/json")
+    case FormatMarkdown:
+        w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+        w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="forensic_report_%d.md"`, eventID))
+    case FormatText:
+        w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+        w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="forensic_report_%d.txt"`, eventID))
+    }
+    
+    // 返回报告
+    if format == FormatJSON {
+        json.NewEncoder(w).Encode(report)
+    } else {
+        w.Write([]byte(report.(string)))
+    }
+}
 // handleRoot 处理根路径，重定向到仪表板
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/static/dashboard.html", http.StatusMovedPermanently)
@@ -497,6 +562,7 @@ func main() {
 	r.HandleFunc("/api/high-risk-events", server.handleHighRiskEvents).Methods("GET")
 	r.HandleFunc("/api/timeline/reconstruct", server.handleTimelineReconstruction).Methods("GET")
 	r.HandleFunc("/api/timeline/privilege-escalation", server.handlePrivilegeEscalationTimeline).Methods("GET")
+	r.HandleFunc("/api/report/forensic", server.handleForensicReport).Methods("GET")
 	r.HandleFunc("/api/health", server.handleHealth).Methods("GET")
 
 	// WebSocket 路由

@@ -655,6 +655,163 @@
             transform: translateY(-2px);
             box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
         }
+
+        /* 取证报告导出模态框样式 */
+        .export-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .export-modal-content {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border-radius: 16px;
+            width: 90%;
+            max-width: 500px;
+            border: 1px solid rgba(102, 126, 234, 0.3);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        .export-modal-header {
+            background: rgba(102, 126, 234, 0.2);
+            padding: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(102, 126, 234, 0.3);
+        }
+
+        .export-modal-header h2 {
+            font-size: 20px;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .export-close-btn {
+            background: rgba(220, 53, 69, 0.2);
+            border: 1px solid rgba(220, 53, 69, 0.3);
+            color: #dc3545;
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            font-size: 18px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .export-close-btn:hover {
+            background: rgba(220, 53, 69, 0.4);
+            transform: scale(1.1);
+        }
+
+        .export-modal-body {
+            padding: 24px;
+        }
+
+        .export-form-group {
+            margin-bottom: 20px;
+        }
+
+        .export-form-group label {
+            display: block;
+            color: #a0a0a0;
+            font-size: 14px;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .export-format-options {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .export-format-option {
+            background: rgba(0, 0, 0, 0.3);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 16px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .export-format-option:hover {
+            background: rgba(0, 0, 0, 0.4);
+            border-color: rgba(102, 126, 234, 0.3);
+        }
+
+        .export-format-option.selected {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.1);
+        }
+
+        .export-format-option input[type="radio"] {
+            margin: 0;
+            cursor: pointer;
+        }
+
+        .export-format-info {
+            flex: 1;
+        }
+
+        .export-format-title {
+            font-weight: 600;
+            color: #e0e0e0;
+            margin-bottom: 4px;
+        }
+
+        .export-format-desc {
+            font-size: 12px;
+            color: #a0a0a0;
+        }
+
+        .export-modal-footer {
+            padding: 20px 24px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+
+        .export-progress {
+            display: none;
+            margin-top: 16px;
+        }
+
+        .export-progress-bar {
+            width: 100%;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+
+        .export-progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s;
+        }
+
+        .export-progress-text {
+            text-align: center;
+            color: #a0a0a0;
+            font-size: 13px;
+        }
     </style>
 </head>
 <body>
@@ -705,6 +862,16 @@
                 <div class="label">EXECVE 事件</div>
                 <div class="value" id="execveCount">0</div>
             </div>
+            <div class="stat-card">
+                <div class="icon">🌐</div>
+                <div class="label">CONNECT 事件</div>
+                <div class="value" id="connectCount">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon">📂</div>
+                <div class="label">OPENAT 事件</div>
+                <div class="value" id="openatCount">0</div>
+            </div>
         </div>
 
         <!-- 过滤器 -->
@@ -725,6 +892,10 @@
                     <option value="0">EXECVE</option>
                     <option value="1">SETUID</option>
                     <option value="2">FILE_WRITE</option>
+                    <option value="3">OPENAT</option>
+                    <option value="4">CONNECT</option>
+                    <option value="5">BIND</option>
+                    <option value="6">EXIT</option>
                 </select>
             </div>
             <div class="filter-group">
@@ -733,6 +904,7 @@
             </div>
             <button class="btn" onclick="loadHighRiskEvents()">🔴 仅显示高风险</button>
             <button class="btn btn-secondary" onclick="loadStatistics()">📊 刷新统计</button>
+            <button class="btn" onclick="exportForensicReportBatch()" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);">📄 批量导出取证报告</button>
             <button class="btn btn-secondary" onclick="sendTestEvent()">📤 发送测试事件</button>
         </div>
 
@@ -785,6 +957,8 @@
                 document.getElementById('lowRiskCount').textContent = stats.risk_level_distribution.LOW || 0;
                 document.getElementById('setuidCount').textContent = stats.event_type_distribution.SETUID || 0;
                 document.getElementById('execveCount').textContent = stats.event_type_distribution.EXECVE || 0;
+                document.getElementById('connectCount').textContent = stats.event_type_distribution.CONNECT || 0;
+                document.getElementById('openatCount').textContent = stats.event_type_distribution.OPENAT || 0;
             } catch (error) {
                 console.error('Failed to load statistics:', error);
             }
@@ -851,6 +1025,96 @@
             });
         }
 
+        // 获取风险特征说明
+        function getRiskFeatures(event) {
+            const features = [];
+            const comm = (event.comm || '').toLowerCase();
+            
+            // 1. 检测反向Shell
+            const shellProcesses = ['bash', 'sh', 'zsh', 'dash', 'tcsh', 'csh', 'fish'];
+            if (event.event_type === 4 && shellProcesses.some(shell => comm === shell || comm.startsWith(shell))) {
+                features.push({
+                    type: 'HIGH',
+                    name: '反向Shell检测',
+                    desc: 'Shell进程发起TCP出站连接，可能是反向Shell攻击'
+                });
+            }
+            
+            // 2. 检测可疑工具
+            const suspiciousTools = ['nc', 'netcat', 'socat', 'telnet', 'ncat', 'wget', 'curl', 'fetch', 'lynx', 'tftp', 'ftp'];
+            if (suspiciousTools.some(tool => comm === tool || comm.includes(tool))) {
+                features.push({
+                    type: 'HIGH',
+                    name: '可疑工具检测',
+                    desc: '检测到可能被滥用的网络/下载工具'
+                });
+            }
+            
+            // 3. SETUID到root
+            if (event.event_type === 1 && event.new_uid === 0 && event.old_uid !== 0) {
+                features.push({
+                    type: 'HIGH',
+                    name: 'SETUID提权',
+                    desc: '从普通用户提升到root权限'
+                });
+            }
+            
+            // 4. 写入敏感文件
+            if (event.event_type === 2 && (event.target_file_type === 1 || event.target_file_type === 2)) {
+                features.push({
+                    type: 'HIGH',
+                    name: '敏感文件写入',
+                    desc: `写入${event.target_file_type === 1 ? 'passwd' : 'shadow'}文件`
+                });
+            }
+            
+            // 5. 敏感文件访问
+            if (event.event_type === 3 && event.target_file_type >= 3 && event.target_file_type <= 7) {
+                const fileTypes = {
+                    3: 'sudoers配置',
+                    4: 'crontab定时任务',
+                    5: 'SSH配置',
+                    6: 'hosts文件',
+                    7: '系统配置文件'
+                };
+                features.push({
+                    type: 'MEDIUM',
+                    name: '敏感文件访问',
+                    desc: `访问${fileTypes[event.target_file_type]}`
+                });
+            }
+            
+            // 6. 非常规端口连接
+            const attackPorts = [4444, 5555, 6666, 1234, 12345, 31337];
+            if (event.event_type === 4 && event.dst_port && attackPorts.includes(event.dst_port)) {
+                features.push({
+                    type: 'MEDIUM',
+                    name: '非常规端口',
+                    desc: `连接到端口 ${event.dst_port}，可能是后门连接`
+                });
+            }
+            
+            // 7. 特权端口绑定
+            if (event.event_type === 5 && event.src_port > 0 && event.src_port < 1024) {
+                features.push({
+                    type: 'MEDIUM',
+                    name: '特权端口绑定',
+                    desc: `绑定特权端口 ${event.src_port}，需要root权限`
+                });
+            }
+            
+            // 8. sudo/su命令
+            if (comm === 'sudo' || comm === 'su' || comm === 'passwd') {
+                features.push({
+                    type: 'HIGH',
+                    name: '特权命令',
+                    desc: '执行sudo/su/passwd等特权命令'
+                });
+            }
+            
+            return features;
+        }
+
         // 创建事件卡片
         function createEventItem(event) {
             const timestamp = new Date(event.timestamp / 1000000);
@@ -880,6 +1144,22 @@
                     eventTypeBadge = '<span class="badge badge-file-write">FILE_WRITE</span>';
                     eventTypeClass = 'badge-file-write';
                     break;
+                case 3:
+                    eventTypeBadge = '<span class="badge" style="background: #17a2b8;">OPENAT</span>';
+                    eventTypeClass = '';
+                    break;
+                case 4:
+                    eventTypeBadge = '<span class="badge" style="background: #e83e8c;">CONNECT</span>';
+                    eventTypeClass = '';
+                    break;
+                case 5:
+                    eventTypeBadge = '<span class="badge" style="background: #6f42c1;">BIND</span>';
+                    eventTypeClass = '';
+                    break;
+                case 6:
+                    eventTypeBadge = '<span class="badge" style="background: #6c757d;">EXIT</span>';
+                    eventTypeClass = '';
+                    break;
                 default:
                     eventTypeBadge = '<span class="badge">UNKNOWN</span>';
             }
@@ -905,6 +1185,39 @@
                 case 2:
                     eventDesc = event.filepath || event.filename || '未知文件';
                     break;
+                case 3:
+                    eventDesc = event.filepath || '未知路径';
+                    break;
+                case 4:
+                    eventDesc = `连接: ${event.dst_addr}:${event.dst_port}`;
+                    break;
+                case 5:
+                    eventDesc = `绑定: ${event.src_addr}:${event.src_port}`;
+                    break;
+                case 6:
+                    eventDesc = `退出码: ${event.exit_code}`;
+                    break;
+            }
+
+            // 获取风险特征
+            const riskFeatures = getRiskFeatures(event);
+            let featuresHTML = '';
+            if (riskFeatures.length > 0) {
+                featuresHTML = `
+                    <div class="risk-features" style="margin-top: 12px; padding: 12px; background: rgba(0, 0, 0, 0.3); border-radius: 8px; border-left: 3px solid #667eea;">
+                        <div style="font-size: 12px; color: #a0a0a0; margin-bottom: 8px; font-weight: 600;">⚡ 风险特征:</div>
+                        ${riskFeatures.map(f => `
+                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px;">
+                                <span style="padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; 
+                                    ${f.type === 'HIGH' ? 'background: rgba(220, 53, 69, 0.2); color: #dc3545;' : 'background: rgba(255, 193, 7, 0.2); color: #ffc107;'}">
+                                    ${f.type === 'HIGH' ? '高' : '中'}
+                                </span>
+                                <span style="font-weight: 600; color: #e0e0e0;">${f.name}</span>
+                                <span style="color: #a0a0a0;">- ${f.desc}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
             }
 
             const eventItem = document.createElement('div');
@@ -931,11 +1244,17 @@
                     ${eventTypeBadge}
                     ${privilegeBadge}
                 </div>
-                ${event.is_privilege_escalation ? `
-                    <button class="timeline-btn" onclick='showTimeline(${JSON.stringify(event)})'>
-                        📊 查看时间线
+                ${featuresHTML}
+                <div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
+                    <button class="timeline-btn" onclick='exportForensicReport(${event.id})'>
+                        📄 导出报告
                     </button>
-                ` : ''}
+                    ${event.is_privilege_escalation ? `
+                        <button class="timeline-btn" onclick='showTimeline(${JSON.stringify(event)})'>
+                            📊 查看时间线
+                        </button>
+                    ` : ''}
+                </div>
             `;
 
             return eventItem;
@@ -1240,7 +1559,218 @@
             if (modal && e.target === modal) {
                 closeTimelineModal();
             }
+            const exportModal = document.getElementById('exportModal');
+            if (exportModal && e.target === exportModal) {
+                closeExportModal();
+            }
         });
+
+        // 显示导出模态框
+        function showExportModal(eventIDs, isBatch = false) {
+            // 移除旧模态框
+            const oldModal = document.getElementById('exportModal');
+            if (oldModal) {
+                oldModal.remove();
+            }
+
+            // 创建模态框
+            const modal = document.createElement('div');
+            modal.id = 'exportModal';
+            modal.className = 'export-modal';
+
+            const title = isBatch 
+                ? `📄 批量导出取证报告 (${eventIDs.length} 个事件)` 
+                : '📄 导出取证报告';
+
+            modal.innerHTML = `
+                <div class="export-modal-content">
+                    <div class="export-modal-header">
+                        <h2>${title}</h2>
+                        <button class="export-close-btn" onclick="closeExportModal()">✕</button>
+                    </div>
+                    <div class="export-modal-body">
+                        <div class="export-form-group">
+                            <label>选择报告格式:</label>
+                            <div class="export-format-options">
+                                <label class="export-format-option selected">
+                                    <input type="radio" name="reportFormat" value="markdown" checked onchange="selectExportFormat(this)">
+                                    <div class="export-format-info">
+                                        <div class="export-format-title">Markdown (.md)</div>
+                                        <div class="export-format-desc">适合在 GitHub、Notion 等平台查看</div>
+                                    </div>
+                                </label>
+                                <label class="export-format-option">
+                                    <input type="radio" name="reportFormat" value="json" onchange="selectExportFormat(this)">
+                                    <div class="export-format-info">
+                                        <div class="export-format-title">JSON (.json)</div>
+                                        <div class="export-format-desc">结构化数据，适合程序处理</div>
+                                    </div>
+                                </label>
+                                <label class="export-format-option">
+                                    <input type="radio" name="reportFormat" value="text" onchange="selectExportFormat(this)">
+                                    <div class="export-format-info">
+                                        <div class="export-format-title">纯文本 (.txt)</div>
+                                        <div class="export-format-desc">简单文本格式，易于阅读</div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="export-progress" id="exportProgress">
+                            <div class="export-progress-bar">
+                                <div class="export-progress-fill" id="exportProgressFill" style="width: 0%"></div>
+                            </div>
+                            <div class="export-progress-text" id="exportProgressText">准备导出...</div>
+                        </div>
+                    </div>
+                    <div class="export-modal-footer">
+                        <button class="btn btn-secondary" onclick="closeExportModal()">取消</button>
+                        <button class="btn" onclick="executeExport(${JSON.stringify(eventIDs)}, ${isBatch})">导出</button>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+        }
+
+        // 选择导出格式
+        function selectExportFormat(radio) {
+            const options = document.querySelectorAll('.export-format-option');
+            options.forEach(opt => opt.classList.remove('selected'));
+            radio.closest('.export-format-option').classList.add('selected');
+        }
+
+        // 关闭导出模态框
+        function closeExportModal() {
+            const modal = document.getElementById('exportModal');
+            if (modal) {
+                modal.remove();
+            }
+        }
+
+        // 执行导出
+        async function executeExport(eventIDs, isBatch) {
+            const format = document.querySelector('input[name="reportFormat"]:checked').value;
+            const progressDiv = document.getElementById('exportProgress');
+            const progressFill = document.getElementById('exportProgressFill');
+            const progressText = document.getElementById('exportProgressText');
+
+            progressDiv.style.display = 'block';
+
+            if (isBatch) {
+                // 批量导出
+                const total = eventIDs.length;
+                for (let i = 0; i < total; i++) {
+                    const progress = Math.round(((i + 1) / total) * 100);
+                    progressFill.style.width = progress + '%';
+                    progressText.textContent = `正在导出 ${i + 1}/${total} 个报告...`;
+
+                    try {
+                        await downloadReport(eventIDs[i], format, i);
+                    } catch (error) {
+                        console.error(`Failed to export report for event ${eventIDs[i]}:`, error);
+                    }
+                }
+                progressText.textContent = `完成！已导出 ${total} 个报告`;
+            } else {
+                // 单个导出
+                progressFill.style.width = '100%';
+                progressText.textContent = '正在生成报告...';
+                try {
+                    await downloadReport(eventIDs[0], format);
+                    progressText.textContent = '完成！';
+                } catch (error) {
+                    console.error('Failed to export report:', error);
+                    progressText.textContent = '导出失败';
+                }
+            }
+
+            setTimeout(() => {
+                closeExportModal();
+            }, 1000);
+        }
+
+        // 下载单个报告
+        async function downloadReport(eventID, format, index = 0) {
+            const response = await fetch(`http://${window.location.host}/api/report/forensic?event_id=${eventID}&format=${format}`);
+            
+            if (!response.ok) {
+                throw new Error('Failed to generate report');
+            }
+
+            const content = await response.text();
+            const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '');
+            let extension = '';
+            let mimeType = '';
+
+            switch (format) {
+                case 'markdown':
+                    extension = 'md';
+                    mimeType = 'text/markdown';
+                    break;
+                case 'json':
+                    extension = 'json';
+                    mimeType = 'application/json';
+                    break;
+                case 'text':
+                    extension = 'txt';
+                    mimeType = 'text/plain';
+                    break;
+            }
+
+            const filename = `forensic_report_${eventID}_${timestamp}.${extension}`;
+            
+            // 创建下载链接
+            const blob = new Blob([content], { type: mimeType });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }
+
+        // 导出单个事件的取证报告
+        function exportForensicReport(eventID) {
+            if (!eventID) {
+                alert('事件ID缺失，无法导出报告');
+                return;
+            }
+            showExportModal([eventID], false);
+        }
+
+        // 批量导出取证报告
+        async function exportForensicReportBatch() {
+            try {
+                const params = {
+                    limit: 100
+                };
+
+                const riskLevel = document.getElementById('riskLevelFilter').value;
+                const eventType = document.getElementById('eventTypeFilter').value;
+                const agentId = document.getElementById('agentIdFilter').value;
+
+                if (riskLevel) params.risk_level = riskLevel;
+                if (eventType) params.event_type = eventType;
+                if (agentId) params.agent_id = agentId;
+
+                const queryParams = new URLSearchParams(params);
+                const response = await fetch(`http://${window.location.host}/api/events?${queryParams}`);
+                const events = await response.json();
+
+                if (!events || events.length === 0) {
+                    alert('当前没有事件可以导出');
+                    return;
+                }
+
+                const eventIDs = events.map(e => e.id);
+                showExportModal(eventIDs, true);
+            } catch (error) {
+                console.error('Failed to load events for export:', error);
+                alert('加载事件列表失败');
+            }
+        }
 
         // 渲染表格视图（使用 React）
         function renderTableView() {

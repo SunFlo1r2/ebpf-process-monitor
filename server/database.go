@@ -502,3 +502,207 @@ type EventStatistics struct {
 	RiskLevelDistribution  map[string]int `json:"risk_level_distribution"`
 	EventTypeDistribution  map[string]int `json:"event_type_distribution"`
 }
+
+// GetRelatedProcesses 获取与指定进程相关的父子进程信息
+func (d *Database) GetRelatedProcesses(pid uint32) (*RelatedProcesses, error) {
+	result := &RelatedProcesses{}
+
+	// 获取父进程信息
+	var parentEvent ProcessEventWithRisk
+	var parentCreatedAt time.Time
+
+	err := d.db.QueryRow(`
+		SELECT id, timestamp, pid, ppid, uid, gid, euid, egid, old_uid, new_uid,
+			comm, filename, filepath, is_privilege_escalation, event_type,
+			target_file_type, risk_level, agent_id, created_at,
+			src_addr, dst_addr, src_port, dst_port, protocol, exit_code
+		FROM security_events
+		WHERE pid IN (
+			SELECT DISTINCT ppid FROM security_events WHERE pid = ?
+		) LIMIT 1
+	`, pid).Scan(
+		&parentEvent.ID,
+		&parentEvent.Timestamp,
+		&parentEvent.Pid,
+		&parentEvent.Ppid,
+		&parentEvent.Uid,
+		&parentEvent.Gid,
+		&parentEvent.Euid,
+		&parentEvent.Egid,
+		&parentEvent.OldUid,
+		&parentEvent.NewUid,
+		&parentEvent.Comm,
+		&parentEvent.Filename,
+		&parentEvent.Filepath,
+		&parentEvent.IsPrivilegeEscalation,
+		&parentEvent.EventType,
+		&parentEvent.TargetFileType,
+		&parentEvent.RiskLevel,
+		&parentEvent.AgentID,
+		&parentCreatedAt,
+		&parentEvent.SrcAddr,
+		&parentEvent.DstAddr,
+		&parentEvent.SrcPort,
+		&parentEvent.DstPort,
+		&parentEvent.Protocol,
+		&parentEvent.ExitCode,
+	)
+
+	if err == nil {
+		parentEvent.CreatedAt = parentCreatedAt.Format(time.RFC3339)
+		result.Parent = &parentEvent
+	}
+
+	// 获取子进程信息
+	rows, err := d.db.Query(`
+		SELECT id, timestamp, pid, ppid, uid, gid, euid, egid, old_uid, new_uid,
+			comm, filename, filepath, is_privilege_escalation, event_type,
+			target_file_type, risk_level, agent_id, created_at,
+			src_addr, dst_addr, src_port, dst_port, protocol, exit_code
+		FROM security_events
+		WHERE pid IN (
+			SELECT DISTINCT pid FROM security_events WHERE ppid = ?
+		) GROUP BY pid
+	`, pid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var children []ProcessEventWithRisk
+	for rows.Next() {
+		var childEvent ProcessEventWithRisk
+		var childCreatedAt time.Time
+
+		err := rows.Scan(
+			&childEvent.ID,
+			&childEvent.Timestamp,
+			&childEvent.Pid,
+			&childEvent.Ppid,
+			&childEvent.Uid,
+			&childEvent.Gid,
+			&childEvent.Euid,
+			&childEvent.Egid,
+			&childEvent.OldUid,
+			&childEvent.NewUid,
+			&childEvent.Comm,
+			&childEvent.Filename,
+			&childEvent.Filepath,
+			&childEvent.IsPrivilegeEscalation,
+			&childEvent.EventType,
+			&childEvent.TargetFileType,
+			&childEvent.RiskLevel,
+			&childEvent.AgentID,
+			&childCreatedAt,
+			&childEvent.SrcAddr,
+			&childEvent.DstAddr,
+			&childEvent.SrcPort,
+			&childEvent.DstPort,
+			&childEvent.Protocol,
+			&childEvent.ExitCode,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		childEvent.CreatedAt = childCreatedAt.Format(time.RFC3339)
+		children = append(children, childEvent)
+	}
+	result.Children = children
+
+	return result, nil
+}
+
+// GetProcessStatistics 获取指定进程的统计信息
+func (d *Database) GetProcessStatistics(pid uint32, startTime, endTime int64) (*ProcessStatistics, error) {
+	stats := &ProcessStatistics{
+		Pid: pid,
+	}
+
+	// 获取总系统调用次数
+	err := d.db.QueryRow(`
+		SELECT COUNT(*) FROM security_events
+		WHERE pid = ? AND timestamp BETWEEN ? AND ?
+	`, pid, startTime, endTime).Scan(&stats.TotalSyscalls)
+	if err != nil {
+		return nil, err
+	}
+
+	// 获取敏感文件访问次数（目标文件类型为1或2）
+	err = d.db.QueryRow(`
+		SELECT COUNT(*) FROM security_events
+		WHERE pid = ? AND timestamp BETWEEN ? AND ?
+		AND target_file_type IN (1, 2)
+	`, pid, startTime, endTime).Scan(&stats.SensitiveFileAccess)
+	if err != nil {
+		return nil, err
+	}
+
+	// 获取网络连接次数（事件类型为4或5）
+	err = d.db.QueryRow(`
+		SELECT COUNT(*) FROM security_events
+		WHERE pid = ? AND timestamp BETWEEN ? AND ?
+		AND event_type IN (4, 5)
+	`, pid, startTime, endTime).Scan(&stats.NetworkConnections)
+	if err != nil {
+		return nil, err
+	}
+
+	// 按事件类型统计
+	rows, err := d.db.Query(`
+		SELECT event_type, COUNT(*) as count
+		FROM security_events
+		WHERE pid = ? AND timestamp BETWEEN ? AND ?
+		GROUP BY event_type
+	`, pid, startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	stats.EventTypeCount = make(map[string]int)
+	for rows.Next() {
+		var eventType int
+		var count int
+		if err := rows.Scan(&eventType, &count); err != nil {
+			return nil, err
+		}
+		var typeName string
+		switch eventType {
+		case 0:
+			typeName = "EXECVE"
+		case 1:
+			typeName = "SETUID"
+		case 2:
+			typeName = "FILE_WRITE"
+		case 3:
+			typeName = "OPENAT"
+		case 4:
+			typeName = "CONNECT"
+		case 5:
+			typeName = "BIND"
+		case 6:
+			typeName = "EXIT"
+		default:
+			typeName = "UNKNOWN"
+		}
+		stats.EventTypeCount[typeName] = count
+	}
+
+	return stats, nil
+}
+
+// RelatedProcesses 表示与进程相关的父子进程
+type RelatedProcesses struct {
+	Parent  *ProcessEventWithRisk   `json:"parent"`
+	Children []ProcessEventWithRisk `json:"children"`
+}
+
+// ProcessStatistics 表示进程的统计信息
+type ProcessStatistics struct {
+	Pid                uint32          `json:"pid"`
+	TotalSyscalls      int             `json:"total_syscalls"`
+	SensitiveFileAccess int            `json:"sensitive_file_access"`
+	NetworkConnections int             `json:"network_connections"`
+	EventTypeCount     map[string]int  `json:"event_type_count"`
+}

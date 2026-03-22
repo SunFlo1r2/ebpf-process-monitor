@@ -22,7 +22,12 @@ enum target_file_type {
     FILE_NONE = 0,
     FILE_PASSWD = 1,            // /etc/passwd
     FILE_SHADOW = 2,            // /etc/shadow
-    FILE_OTHER = 3,
+    FILE_SUDOERS = 3,           // /etc/sudoers
+    FILE_CRONTAB = 4,           // /etc/crontab 或 /var/spool/cron/
+    FILE_SSH_CONFIG = 5,        // SSH 配置文件
+    FILE_HOSTS = 6,             // /etc/hosts
+    FILE_SYSTEM_CONFIG = 7,     // 系统配置文件
+    FILE_OTHER = 8,
 };
 
 struct process_event {
@@ -314,7 +319,7 @@ int trace_openat(struct trace_event_raw_sys_enter *ctx)
     __u32 uid = uid_gid & 0xFFFFFFFF;
     __u32 gid = uid_gid >> 32;
     
-    // 只追踪root权限进程或SUID进程
+    // 获取当前任务和权限
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
     struct cred *cred;
     __u32 euid = 0;
@@ -325,21 +330,95 @@ int trace_openat(struct trace_event_raw_sys_enter *ctx)
     
     bpf_probe_read_kernel(&euid, sizeof(euid), &cred->euid.val);
     
-    // 只追踪root进程或权限提升的进程
-    if (euid != 0 && euid == uid) {
+    // 读取文件路径
+    const char *filename_ptr = (const char *)ctx->args[1];
+    char filename[MAX_PATH_LEN] = {0};
+    if (filename_ptr) {
+        bpf_probe_read_user_str(filename, sizeof(filename), filename_ptr);
+    }
+    
+    // 检测敏感文件类型
+    __u8 target_file_type = FILE_NONE;
+    __u8 is_sensitive_file = 0;
+    
+    // 检查 /etc/passwd
+    if (filename[0] == '/' && filename[1] == 'e' && filename[2] == 't' &&
+        filename[3] == 'c' && filename[4] == '/' && filename[5] == 'p' &&
+        filename[6] == 'a' && filename[7] == 's' && filename[8] == 's' &&
+        filename[9] == 'w' && filename[10] == 'd') {
+        target_file_type = FILE_PASSWD;
+        is_sensitive_file = 1;
+    }
+    // 检查 /etc/shadow
+    else if (filename[0] == '/' && filename[1] == 'e' && filename[2] == 't' &&
+        filename[3] == 'c' && filename[4] == '/' && filename[5] == 's' &&
+        filename[6] == 'h' && filename[7] == 'a' && filename[8] == 'd' &&
+        filename[9] == 'o' && filename[10] == 'w') {
+        target_file_type = FILE_SHADOW;
+        is_sensitive_file = 1;
+    }
+    // 检查 /etc/sudoers
+    else if (filename[0] == '/' && filename[1] == 'e' && filename[2] == 't' &&
+        filename[3] == 'c' && filename[4] == '/' && filename[5] == 's' &&
+        filename[6] == 'u' && filename[7] == 'd' && filename[8] == 'o' &&
+        filename[9] == 'e' && filename[10] == 'r' && filename[11] == 's') {
+        target_file_type = FILE_SUDOERS;
+        is_sensitive_file = 1;
+    }
+    // 检查 /etc/crontab 或 /var/spool/cron/
+    else if ((filename[0] == '/' && filename[1] == 'e' && filename[2] == 't' &&
+        filename[3] == 'c' && filename[4] == '/' && filename[5] == 'c' &&
+        filename[6] == 'r' && filename[7] == 'o' && filename[8] == 'n' &&
+        filename[9] == 't' && filename[10] == 'a' && filename[11] == 'b') ||
+        (filename[0] == '/' && filename[1] == 'v' && filename[2] == 'a' &&
+        filename[3] == 'r' && filename[4] == '/' && filename[5] == 's' &&
+        filename[6] == 'p' && filename[7] == 'o' && filename[8] == 'o' &&
+        filename[9] == 'l' && filename[10] == '/' && filename[11] == 'c' &&
+        filename[12] == 'r' && filename[13] == 'o' && filename[14] == 'n')) {
+        target_file_type = FILE_CRONTAB;
+        is_sensitive_file = 1;
+    }
+    // 检查 SSH 配置文件
+    else if ((filename[0] == '/' && filename[1] == 'e' && filename[2] == 't' &&
+        filename[3] == 'c' && filename[4] == '/' && filename[5] == 's' &&
+        filename[6] == 's' && filename[7] == 'h' && filename[8] == '/') ||
+        (filename[0] == '~' && filename[1] == '/' && filename[2] == '.' &&
+        filename[3] == 's' && filename[4] == 's' && filename[5] == 'h' && filename[6] == '/')) {
+        target_file_type = FILE_SSH_CONFIG;
+        is_sensitive_file = 1;
+    }
+    // 检查 /etc/hosts
+    else if (filename[0] == '/' && filename[1] == 'e' && filename[2] == 't' &&
+        filename[3] == 'c' && filename[4] == '/' && filename[5] == 'h' &&
+        filename[6] == 'o' && filename[7] == 's' && filename[8] == 't' &&
+        filename[9] == 's') {
+        target_file_type = FILE_HOSTS;
+        is_sensitive_file = 1;
+    }
+    // 检查其他系统配置文件
+    else if (filename[0] == '/' && filename[1] == 'e' && filename[2] == 't' &&
+        filename[3] == 'c' && filename[4] == '/') {
+        // 检查常见的系统配置文件
+        __u8 i;
+        for (i = 5; i < MAX_PATH_LEN - 1; i++) {
+            if (filename[i] == '\0' || filename[i] == '/') {
+                break;
+            }
+        }
+        target_file_type = FILE_SYSTEM_CONFIG;
+        is_sensitive_file = 1;
+    }
+    
+    // 只追踪以下情况的文件访问：
+    // 1. 敏感文件访问
+    // 2. root权限进程或SUID进程
+    if (!is_sensitive_file && (euid != 0 && euid == uid)) {
         return 0;
     }
     
     event = bpf_ringbuf_reserve(&events, sizeof(struct process_event), 0);
     if (!event) {
         return 0;
-    }
-    
-    // 读取文件路径
-    const char *filename_ptr = (const char *)ctx->args[1];
-    char filename[MAX_PATH_LEN] = {0};
-    if (filename_ptr) {
-        bpf_probe_read_user_str(filename, sizeof(filename), filename_ptr);
     }
     
     event->timestamp = bpf_ktime_get_ns();
@@ -353,7 +432,7 @@ int trace_openat(struct trace_event_raw_sys_enter *ctx)
     event->new_uid = euid;
     event->is_privilege_escalation = (euid != uid) ? 1 : 0;
     event->event_type = EVENT_OPENAT;
-    event->target_file_type = FILE_NONE;
+    event->target_file_type = target_file_type;
     
     // 网络相关字段初始化
     event->src_addr = 0;
@@ -382,7 +461,7 @@ int trace_connect(struct trace_event_raw_sys_enter *ctx)
     __u32 uid = uid_gid & 0xFFFFFFFF;
     __u32 gid = uid_gid >> 32;
     
-    // 只追踪root权限进程或SUID进程
+    // 获取当前任务和权限
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
     struct cred *cred;
     __u32 euid = 0;
@@ -393,8 +472,34 @@ int trace_connect(struct trace_event_raw_sys_enter *ctx)
     
     bpf_probe_read_kernel(&euid, sizeof(euid), &cred->euid.val);
     
-    // 只追踪root进程或权限提升的进程
-    if (euid != 0 && euid == uid) {
+    // 获取进程名称
+    char comm[TASK_COMM_LEN];
+    bpf_get_current_comm(&comm, sizeof(comm));
+    
+    // 检测反向Shell：shell进程建立出站连接
+    // bash, sh, zsh, dash等shell进程发起TCP连接可能是反向shell
+    __u8 is_reverse_shell = 0;
+    if ((comm[0] == 'b' && comm[1] == 'a' && comm[2] == 's' && comm[3] == 'h') ||
+        (comm[0] == 's' && comm[1] == 'h' && comm[2] == '\0') ||
+        (comm[0] == 'z' && comm[1] == 's' && comm[2] == 'h') ||
+        (comm[0] == 'd' && comm[1] == 'a' && comm[2] == 's' && comm[3] == 'h')) {
+        is_reverse_shell = 1;
+    }
+    
+    // 检测可疑工具：nc, netcat, socat, telnet等工具的连接
+    __u8 is_suspicious_tool = 0;
+    if ((comm[0] == 'n' && comm[1] == 'c' && comm[2] == '\0') ||
+        (comm[0] == 'n' && comm[1] == 'e' && comm[2] == 't' && comm[3] == 'c' && comm[4] == 'a' && comm[5] == 't') ||
+        (comm[0] == 's' && comm[1] == 'o' && comm[2] == 'c' && comm[3] == 'a' && comm[4] == 't') ||
+        (comm[0] == 't' && comm[1] == 'e' && comm[2] == 'l' && comm[3] == 'n' && comm[4] == 'e' && comm[5] == 't')) {
+        is_suspicious_tool = 1;
+    }
+    
+    // 只追踪以下情况的网络连接：
+    // 1. 反向shell检测
+    // 2. 可疑工具检测
+    // 3. root权限进程或SUID进程
+    if (!is_reverse_shell && !is_suspicious_tool && (euid != 0 && euid == uid)) {
         return 0;
     }
     
@@ -434,7 +539,7 @@ int trace_connect(struct trace_event_raw_sys_enter *ctx)
     event->protocol = 6; // TCP
     event->exit_code = 0;
     
-    bpf_get_current_comm(&event->comm, sizeof(event->comm));
+    __builtin_memcpy(event->comm, comm, sizeof(event->comm));
     __builtin_memset(event->filename, 0, sizeof(event->filename));
     __builtin_memset(event->filepath, 0, sizeof(event->filepath));
     
