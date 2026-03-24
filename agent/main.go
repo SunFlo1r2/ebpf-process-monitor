@@ -79,8 +79,11 @@ type ServerEvent struct {
 const serverURL = "http://localhost:8080/api/events"
 
 var httpClient = &http.Client{
-    Timeout: 5 * time.Second,
+    Timeout: 10 * time.Second,
 }
+
+// 控制并发发送的 channel
+var sendSemaphore = make(chan struct{}, 50) // 最多 50 个并发请求
 
 var bootTime time.Time
 
@@ -128,6 +131,19 @@ func formatTimestamp(timestamp uint64) string {
 
 // sendEventToServer 将事件发送到服务器
 func sendEventToServer(event *ProcessEvent) {
+    // 过滤掉发送到本地服务器的 CONNECT 事件，避免无限循环
+    if event.EventType == 4 { // EVENT_CONNECT
+        // localhost (127.0.0.1) 的 IP 是 0x0100007f (网络字节序)
+        // 8080 端口是 0x901F (网络字节序)
+        if event.DstAddr == 0x0100007f && event.DstPort == 0x901F {
+            return // 忽略发送到 localhost:8080 的连接
+        }
+    }
+
+    // 获取信号量，限制并发数
+    sendSemaphore <- struct{}{}
+    defer func() { <-sendSemaphore }()
+
     // 将 boot time 转换为真实的 Unix 时间戳（纳秒）
     realTime := bootTime.Add(time.Duration(event.Timestamp) * time.Nanosecond)
     unixTimestampNs := uint64(realTime.UnixNano())
@@ -148,7 +164,7 @@ func sendEventToServer(event *ProcessEvent) {
         IsPrivilegeEscalation: event.IsPrivilegeEscalation == 1,
         EventType:             event.EventType,
         TargetFileType:        event.TargetFileType,
-        
+
         // 网络连接相关字段
         SrcAddr:               event.SrcAddr,
         DstAddr:               event.DstAddr,
@@ -216,13 +232,17 @@ func main() {
         log.Fatal("Program handle_file_permission not found in collection")
     }
 
-    // 暂时禁用 openat 监控（存在权限问题）
-    /*
+    // 获取 openat 程序
     progOpenat := coll.Programs["trace_openat"]
     if progOpenat == nil {
         log.Fatal("Program trace_openat not found in collection")
     }
-    */
+
+    // 获取 connect 程序
+    progConnect := coll.Programs["trace_connect"]
+    if progConnect == nil {
+        log.Fatal("Program trace_connect not found in collection")
+    }
 
     // 获取 events map
     eventsMap := coll.Maps["events"]
@@ -267,15 +287,23 @@ func main() {
         log.Println("Successfully attached to file_permission LSM hook")
     }
 
-    // 附加到 openat tracepoint（暂时禁用，因为存在权限问题）
-    /*
+    // 附加到 openat tracepoint
     tpOpenat, err := link.Tracepoint("syscalls", "sys_enter_openat", progOpenat, nil)
     if err != nil {
         log.Printf("Warning: Failed to attach openat tracepoint: %v", err)
     } else {
         defer tpOpenat.Close()
+        log.Println("Successfully attached to openat tracepoint")
     }
-    */
+
+    // 附加到 connect tracepoint
+    tpConnect, err := link.Tracepoint("syscalls", "sys_enter_connect", progConnect, nil)
+    if err != nil {
+        log.Printf("Warning: Failed to attach connect tracepoint: %v", err)
+    } else {
+        defer tpConnect.Close()
+        log.Println("Successfully attached to connect tracepoint")
+    }
 
     log.Println("Successfully attached to tracepoints and LSM hooks")
 
@@ -337,6 +365,13 @@ func main() {
         var event ProcessEvent
         if err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &event); err != nil {
             log.Printf("Parsing event: %v", err)
+            continue
+        }
+
+        comm := string(bytes.Trim(event.Comm[:], "\x00"))
+
+        // 过滤掉 agent 自己的事件，避免无限循环
+        if comm == "agent" {
             continue
         }
 
