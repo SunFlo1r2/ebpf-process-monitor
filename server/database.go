@@ -15,15 +15,21 @@ type Database struct {
 
 // NewDatabase 创建数据库连接
 func NewDatabase(dbPath string) (*Database, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	// 添加 SQLite 特定的连接参数，改善并发性能
+	connectionString := fmt.Sprintf("%s?_journal_mode=WAL&_synchronous=NORMAL&_timeout=5000&_busy_timeout=5000", dbPath)
+	
+	db, err := sql.Open("sqlite3", connectionString)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// 设置连接池参数
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
+	// 设置连接池参数 - 减少并发连接以避免锁定
+	db.SetMaxOpenConns(5)  // 减少最大连接数
+	db.SetMaxIdleConns(2)  // 减少空闲连接
+	db.SetConnMaxLifetime(30 * time.Minute)
+	
+	// 设置连接超时
+	db.SetConnMaxIdleTime(10 * time.Minute)
 
 	// 初始化数据库表
 	if err := initSchema(db); err != nil {
@@ -705,4 +711,28 @@ type ProcessStatistics struct {
 	SensitiveFileAccess int            `json:"sensitive_file_access"`
 	NetworkConnections int             `json:"network_connections"`
 	EventTypeCount     map[string]int  `json:"event_type_count"`
+}
+
+// DeleteOldEvents 删除指定时间之前的旧事件
+func (d *Database) DeleteOldEvents(beforeTime time.Time) (int64, error) {
+	query := `
+	DELETE FROM security_events 
+	WHERE created_at < ?
+	`
+	
+	result, err := d.db.Exec(query, beforeTime)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete old events: %w", err)
+	}
+	
+	deletedCount, _ := result.RowsAffected()
+	
+	// 执行 VACUUM 以回收空间
+	_, err = d.db.Exec("VACUUM")
+	if err != nil {
+		// VACUUM 失败不影响删除结果，只记录警告
+		fmt.Printf("Warning: VACUUM failed after deleting events: %v\n", err)
+	}
+	
+	return deletedCount, nil
 }

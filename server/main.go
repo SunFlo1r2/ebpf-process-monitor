@@ -537,6 +537,39 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/static/dashboard.html", http.StatusMovedPermanently)
 }
 
+// startCleanupTask 启动定时清理任务，定期删除旧数据
+func (s *Server) startCleanupTask(interval time.Duration) {
+	// 首次启动时先执行一次清理
+	s.cleanupOldEvents()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		<-ticker.C
+		s.cleanupOldEvents()
+	}
+}
+
+// cleanupOldEvents 清理24小时前的旧事件
+func (s *Server) cleanupOldEvents() {
+	// 删除24小时前的数据
+	beforeTime := time.Now().Add(-24 * time.Hour)
+	log.Printf("Starting cleanup of events older than %s", beforeTime.Format("2006-01-02 15:04:05"))
+	
+	deletedCount, err := s.db.DeleteOldEvents(beforeTime)
+	if err != nil {
+		log.Printf("Failed to cleanup old events: %v", err)
+		return
+	}
+
+	if deletedCount > 0 {
+		log.Printf("Cleaned up %d old events (older than 24 hours)", deletedCount)
+	} else {
+		log.Printf("No old events to clean up")
+	}
+}
+
 func main() {
 	// 创建服务器实例
 	server, err := NewServer("./security_events.db")
@@ -547,6 +580,9 @@ func main() {
 
 	// 启动广播协程
 	go server.broadcastEvents()
+
+	// 启动定时清理协程 - 每24小时清理一次旧数据
+	go server.startCleanupTask(24 * time.Hour)
 
 	// 创建路由
 	r := mux.NewRouter()
