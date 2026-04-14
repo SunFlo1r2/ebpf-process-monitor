@@ -12,6 +12,12 @@ server/server_new
 *.sqlite3
 server/security_events.db
 
+# SQLite WAL 和 SHM 文件
+*.db-shm
+*.db-wal
+*.db-shm.backup
+*.db-wal.backup
+
 # 日志文件
 *.log
 server/server.log
@@ -35,3 +41,9 @@ bin/
 # 配置文件（可能包含敏感信息）
 config.json
 .env
+
+# 性能报告
+performance_reports/
+
+# 临时脚本目录
+sh/

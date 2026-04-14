@@ -6,6 +6,7 @@ import (
     "encoding/binary"
     "encoding/json"
     "errors"
+    "flag"
     "fmt"
     "log"
     "net/http"
@@ -78,6 +79,33 @@ type ServerEvent struct {
 
 const serverURL = "http://localhost:8080/api/events"
 
+// 全局变量：Agent ID，用于标识不同的监控主机
+var agentID string
+
+// 白名单配置：系统守护进程列表
+var whitelistProcessNames = []string{
+    "systemd",
+    "systemd-journal",
+    "systemd-resolve",
+    "systemd-timesyncd",
+    "systemd-udevd",
+    "cron",
+    "anacron",
+    "atd",
+    "sshd",
+    "dbus-daemon",
+    "dbus-broker-launch",
+    "NetworkManager",
+    "rsyslog",
+    "syslog-ng",
+    "systemd-logind",
+    "agetty",
+    "login",
+    "bash",  // 普通shell，除非有可疑行为
+    "sh",
+    "dash",
+}
+
 var httpClient = &http.Client{
     Timeout: 10 * time.Second,
 }
@@ -129,14 +157,61 @@ func formatTimestamp(timestamp uint64) string {
     return realTime.Format("2006-01-02 15:04:05.000")
 }
 
+// isWhitelisted 检查进程是否在白名单中
+func isWhitelisted(comm string) bool {
+    commLower := strings.ToLower(strings.TrimSpace(comm))
+    for _, name := range whitelistProcessNames {
+        if commLower == name || strings.HasPrefix(commLower, name) {
+            return true
+        }
+    }
+    return false
+}
+
 // sendEventToServer 将事件发送到服务器
 func sendEventToServer(event *ProcessEvent) {
+    comm := string(bytes.Trim(event.Comm[:], "\x00"))
+
     // 过滤掉发送到本地服务器的 CONNECT 事件，避免无限循环
     if event.EventType == 4 { // EVENT_CONNECT
         // localhost (127.0.0.1) 的 IP 是 0x0100007f (网络字节序)
         // 8080 端口是 0x901F (网络字节序)
         if event.DstAddr == 0x0100007f && event.DstPort == 0x901F {
             return // 忽略发送到 localhost:8080 的连接
+        }
+    }
+
+    // 白名单过滤：过滤已知的无风险进程
+    if isWhitelisted(comm) {
+        // 对于白名单中的进程，只记录高风险事件
+        // 高风险事件包括：真正的权限提升、敏感文件写入、反向shell等
+        isHighRisk := false
+
+        // 检查是否是真正的权限提升（UID != 0 && EUID == 0）
+        if event.Uid != 0 && event.Euid == 0 {
+            isHighRisk = true
+        }
+
+        // 检查是否是敏感文件写入
+        if event.EventType == 2 && (event.TargetFileType == 1 || event.TargetFileType == 2) {
+            isHighRisk = true
+        }
+
+        // 检查是否是反向shell（shell进程建立出站连接）
+        if event.EventType == 4 {
+            shellPatterns := []string{"bash", "sh", "zsh", "dash"}
+            commLower := strings.ToLower(comm)
+            for _, pattern := range shellPatterns {
+                if commLower == pattern || strings.HasPrefix(commLower, pattern) {
+                    isHighRisk = true
+                    break
+                }
+            }
+        }
+
+        // 如果不是高风险事件，则过滤掉
+        if !isHighRisk {
+            return
         }
     }
 
@@ -180,7 +255,16 @@ func sendEventToServer(event *ProcessEvent) {
         return
     }
 
-    resp, err := httpClient.Post(serverURL, "application/json", bytes.NewBuffer(jsonData))
+    // 创建 HTTP 请求并添加 Agent ID 请求头
+    req, err := http.NewRequest("POST", serverURL, bytes.NewBuffer(jsonData))
+    if err != nil {
+        log.Printf("Failed to create request: %v", err)
+        return
+    }
+    req.Header.Set("Content-Type", "application/json")
+    req.Header.Set("X-Agent-ID", agentID)
+
+    resp, err := httpClient.Do(req)
     if err != nil {
         log.Printf("Failed to send event to server: %v", err)
         return
@@ -193,6 +277,13 @@ func sendEventToServer(event *ProcessEvent) {
 }
 
 func main() {
+    // 解析命令行参数
+    flag.StringVar(&agentID, "id", "default", "Agent ID 用于标识不同的监控主机")
+    flag.StringVar(&agentID, "agent-id", "default", "Agent ID 用于标识不同的监控主机")
+    flag.Parse()
+
+    log.Printf("Starting agent with ID: %s", agentID)
+
     if err := rlimit.RemoveMemlock(); err != nil {
         log.Fatal("Failed to remove memlock:", err)
     }

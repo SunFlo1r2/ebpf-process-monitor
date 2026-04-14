@@ -66,11 +66,11 @@ func initSchema(db *sql.DB) error {
 		is_privilege_escalation BOOLEAN DEFAULT 0,
 		event_type INTEGER NOT NULL,
 		target_file_type INTEGER DEFAULT 0,
-		risk_level TEXT NOT NULL DEFAULT 'LOW',
+		risk_level TEXT NOT NULL DEFAULT 'NONE',
 		agent_id TEXT DEFAULT 'default',
 		fingerprint TEXT UNIQUE,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		
+
 		-- 网络连接相关字段
 		src_addr INTEGER DEFAULT 0,
 		dst_addr INTEGER DEFAULT 0,
@@ -356,6 +356,27 @@ func (d *Database) GetEventStatistics() (*EventStatistics, error) {
 		return nil, err
 	}
 
+	// 按 agent_id 统计
+	rows, err = d.db.Query(`
+		SELECT agent_id, COUNT(*) as count
+		FROM security_events
+		GROUP BY agent_id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	stats.AgentDistribution = make(map[string]int)
+	for rows.Next() {
+		var agentID string
+		var count int
+		if err := rows.Scan(&agentID, &count); err != nil {
+			return nil, err
+		}
+		stats.AgentDistribution[agentID] = count
+	}
+
 	return stats, nil
 }
 
@@ -507,6 +528,7 @@ type EventStatistics struct {
 	Last24Hours            int            `json:"last_24_hours"`
 	RiskLevelDistribution  map[string]int `json:"risk_level_distribution"`
 	EventTypeDistribution  map[string]int `json:"event_type_distribution"`
+	AgentDistribution      map[string]int `json:"agent_distribution"`
 }
 
 // GetRelatedProcesses 获取与指定进程相关的父子进程信息

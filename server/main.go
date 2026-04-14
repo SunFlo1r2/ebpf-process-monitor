@@ -29,7 +29,8 @@ type ProcessEvent struct {
     IsPrivilegeEscalation bool   `json:"is_privilege_escalation"`
     EventType             uint8  `json:"event_type"`
     TargetFileType        uint8  `json:"target_file_type"`
-    
+    AgentID               string `json:"agent_id"` // Agent ID 标识不同的监控主机
+
     // 网络连接相关字段
     SrcAddr               uint32 `json:"src_addr"`
     DstAddr               uint32 `json:"dst_addr"`
@@ -171,6 +172,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	// 评估风险等级
 	riskLevel := s.riskAnalyzer.Evaluate(event)
+
+	// 将 AgentID 设置到事件对象中
+	event.AgentID = agentID
 
 	// 存储到数据库
 	if err := s.db.InsertEvent(event, riskLevel, fingerprint, agentID); err != nil {

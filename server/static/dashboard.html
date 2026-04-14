@@ -116,6 +116,9 @@
         .stat-card.low {
             border-left: 4px solid #28a745;
         }
+        .stat-card.none {
+            border-left: 4px solid #6c757d;
+        }
         .stat-card .icon {
             font-size: 32px;
             margin-bottom: 12px;
@@ -319,6 +322,9 @@
         .event-item.low {
             border-left-color: #28a745;
         }
+        .event-item.none {
+            border-left-color: #6c757d;
+        }
         .event-header {
             display: flex;
             justify-content: space-between;
@@ -363,6 +369,11 @@
             background: rgba(40, 167, 69, 0.2);
             color: #28a745;
             border: 1px solid rgba(40, 167, 69, 0.3);
+        }
+        .risk-badge.none {
+            background: rgba(108, 117, 125, 0.2);
+            color: #6c757d;
+            border: 1px solid rgba(108, 117, 125, 0.3);
         }
         .event-meta {
             color: #a0a0a0;
@@ -832,7 +843,12 @@
                 <div class="status-item">
                     <span id="last24Hours">0</span> 近24小时
                 </div>
+                <div class="status-item connected">
+                    <span class="status-dot connected"></span>
+                    <span id="activeAgents">0</span> 已连接 Agent
+                </div>
             </div>
+            <div id="agentList" style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;"></div>
         </div>
 
         <!-- 统计卡片 -->
@@ -851,6 +867,11 @@
                 <div class="icon">🟢</div>
                 <div class="label">低风险事件</div>
                 <div class="value" id="lowRiskCount">0</div>
+            </div>
+            <div class="stat-card none">
+                <div class="icon">⚪</div>
+                <div class="label">无风险事件</div>
+                <div class="value" id="noneRiskCount">0</div>
             </div>
             <div class="stat-card">
                 <div class="icon">📊</div>
@@ -883,6 +904,7 @@
                     <option value="HIGH">高风险</option>
                     <option value="MEDIUM">中风险</option>
                     <option value="LOW">低风险</option>
+                    <option value="NONE">无风险</option>
                 </select>
             </div>
             <div class="filter-group">
@@ -901,6 +923,13 @@
             <div class="filter-group">
                 <label>Agent ID:</label>
                 <input type="text" id="agentIdFilter" placeholder="输入 Agent ID" onchange="applyFilters()">
+            </div>
+            <div class="filter-group">
+                <label>展示模式:</label>
+                <select id="viewModeFilter" onchange="applyFilters()">
+                    <option value="aggregate">🔄 聚合会话</option>
+                    <option value="original">📋 原始事件</option>
+                </select>
             </div>
             <button class="btn" onclick="loadHighRiskEvents()">🔴 仅显示高风险</button>
             <button class="btn btn-secondary" onclick="loadStatistics()">📊 刷新统计</button>
@@ -944,21 +973,62 @@
         const connectionStatus = document.getElementById('connectionStatus');
         const connectionText = document.getElementById('connectionText');
         
+        // 记录展开的会话状态（通过会话主事件的ID来标识）
+        const expandedSessions = new Set();
+        
         // 加载统计数据
         async function loadStatistics() {
             try {
                 const response = await fetch(`http://${window.location.host}/api/statistics`);
                 const stats = await response.json();
-                
+
                 document.getElementById('totalEvents').textContent = stats.total_events;
                 document.getElementById('last24Hours').textContent = stats.last_24_hours;
                 document.getElementById('highRiskCount').textContent = stats.risk_level_distribution.HIGH || 0;
                 document.getElementById('mediumRiskCount').textContent = stats.risk_level_distribution.MEDIUM || 0;
                 document.getElementById('lowRiskCount').textContent = stats.risk_level_distribution.LOW || 0;
+                document.getElementById('noneRiskCount').textContent = stats.risk_level_distribution.NONE || 0;
                 document.getElementById('setuidCount').textContent = stats.event_type_distribution.SETUID || 0;
                 document.getElementById('execveCount').textContent = stats.event_type_distribution.EXECVE || 0;
                 document.getElementById('connectCount').textContent = stats.event_type_distribution.CONNECT || 0;
                 document.getElementById('openatCount').textContent = stats.event_type_distribution.OPENAT || 0;
+
+                // 更新已连接 agents 显示
+                const agentCount = Object.keys(stats.agent_distribution || {}).length;
+                document.getElementById('activeAgents').textContent = agentCount;
+
+                // 显示 agent 列表
+                const agentList = document.getElementById('agentList');
+                agentList.innerHTML = '';
+                if (stats.agent_distribution) {
+                    Object.entries(stats.agent_distribution).forEach(([agentId, count]) => {
+                        const agentBadge = document.createElement('div');
+                        agentBadge.style.cssText = `
+                            background: rgba(102, 126, 234, 0.2);
+                            border: 1px solid rgba(102, 126, 234, 0.3);
+                            padding: 6px 12px;
+                            border-radius: 6px;
+                            font-size: 12px;
+                            display: flex;
+                            align-items: center;
+                            gap: 6px;
+                            cursor: pointer;
+                            transition: all 0.2s;
+                        `;
+                        agentBadge.innerHTML = `<span>🤖 ${agentId}</span><span style="color: #a0a0a0;">(${count})</span>`;
+                        agentBadge.onclick = () => {
+                            document.getElementById('agentIdFilter').value = agentId;
+                            applyFilters();
+                        };
+                        agentBadge.onmouseover = () => {
+                            agentBadge.style.background = 'rgba(102, 126, 234, 0.4)';
+                        };
+                        agentBadge.onmouseout = () => {
+                            agentBadge.style.background = 'rgba(102, 126, 234, 0.2)';
+                        };
+                        agentList.appendChild(agentBadge);
+                    });
+                }
             } catch (error) {
                 console.error('Failed to load statistics:', error);
             }
@@ -1006,7 +1076,98 @@
             loadEvents(params);
         }
 
-        // 显示事件
+        // 事件聚合函数 - 将相关事件聚合为会话
+        function aggregateEvents(events) {
+            if (!events || events.length === 0) {
+                return [];
+            }
+
+            const sessions = [];
+            const usedEventIds = new Set();
+            const TIME_WINDOW_MS = 5000; // 5秒时间窗口
+
+            // 按时间排序
+            const sortedEvents = [...events].sort((a, b) => b.timestamp - a.timestamp);
+
+            for (let i = 0; i < sortedEvents.length; i++) {
+                if (usedEventIds.has(sortedEvents[i].id)) {
+                    continue;
+                }
+
+                const currentEvent = sortedEvents[i];
+                const sessionEvents = [currentEvent];
+                usedEventIds.add(currentEvent.id);
+
+                // 查找相关事件
+                for (let j = i + 1; j < sortedEvents.length; j++) {
+                    if (usedEventIds.has(sortedEvents[j].id)) {
+                        continue;
+                    }
+
+                    const otherEvent = sortedEvents[j];
+                    const timeDiff = Math.abs(currentEvent.timestamp - otherEvent.timestamp) / 1000000; // 转换为毫秒
+
+                    // 聚合条件：
+                    // 1. 时间窗口内（5秒内）
+                    // 2. 满足以下任一关系：
+                    //    a. 同一个父进程（ppid相同）
+                    //    b. 一个是另一个的父进程（pid = ppid）
+                    //    c. 同一个进程的连续事件
+                    if (timeDiff <= TIME_WINDOW_MS) {
+                        const isRelated = 
+                            currentEvent.ppid === otherEvent.ppid ||
+                            currentEvent.pid === otherEvent.ppid ||
+                            otherEvent.pid === currentEvent.ppid ||
+                            currentEvent.pid === otherEvent.pid;
+
+                        if (isRelated) {
+                            sessionEvents.push(otherEvent);
+                            usedEventIds.add(otherEvent.id);
+                        }
+                    } else {
+                        // 超出时间窗口，停止查找
+                        break;
+                    }
+                }
+
+                // 如果会话包含多个事件，创建聚合会话
+                if (sessionEvents.length > 1) {
+                    sessions.push({
+                        type: 'session',
+                        events: sessionEvents,
+                        startTime: Math.min(...sessionEvents.map(e => e.timestamp)),
+                        endTime: Math.max(...sessionEvents.map(e => e.timestamp)),
+                        riskLevel: getHighestRiskLevel(sessionEvents),
+                        eventCount: sessionEvents.length
+                    });
+                } else {
+                    // 单个事件
+                    sessions.push({
+                        type: 'event',
+                        event: currentEvent
+                    });
+                }
+            }
+
+            return sessions;
+        }
+
+        // 获取会话中的最高风险等级
+        function getHighestRiskLevel(events) {
+            const riskPriority = { 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1, 'NONE': 0 };
+            let highestRisk = 'NONE';
+            
+            for (const event of events) {
+                const currentRisk = (event.risk_level || 'NONE').toUpperCase();
+                if (riskPriority[currentRisk] !== undefined && riskPriority[currentRisk] > riskPriority[highestRisk]) {
+                    highestRisk = currentRisk;
+                }
+            }
+            
+            return highestRisk;
+        }
+
+        // 显示事件（支持聚合）
         function displayEvents(events) {
             if (!events || events.length === 0) {
                 eventsList.innerHTML = `
@@ -1018,11 +1179,210 @@
                 return;
             }
 
-            eventsList.innerHTML = '';
-            events.forEach(event => {
-                const eventItem = createEventItem(event);
-                eventsList.appendChild(eventItem);
+            // 检查是否启用聚合（从用户选择的展示模式）
+            const viewMode = document.getElementById('viewModeFilter').value;
+            const enableAggregation = viewMode === 'aggregate';
+
+            if (enableAggregation) {
+                // 启用聚合模式
+                const sessions = aggregateEvents(events);
+                eventsList.innerHTML = '';
+                
+                sessions.forEach(session => {
+                    if (session.type === 'session') {
+                        const sessionCard = createSessionCard(session);
+                        eventsList.appendChild(sessionCard);
+                    } else {
+                        const eventItem = createEventItem(session.event);
+                        eventsList.appendChild(eventItem);
+                    }
+                });
+                
+                // 恢复展开的会话状态
+                setTimeout(() => {
+                    expandedSessions.forEach(eventId => {
+                        // 查找包含该事件ID的会话并展开
+                        const reportBtns = document.querySelectorAll(`button[onclick*="exportForensicReport(${eventId})"]`);
+                        reportBtns.forEach(btn => {
+                            const sessionDetails = btn.closest('.session-details');
+                            if (sessionDetails) {
+                                const toggleBtn = sessionDetails.previousElementSibling.querySelector('.timeline-btn');
+                                if (toggleBtn && sessionDetails.style.display === 'none') {
+                                    sessionDetails.style.display = 'block';
+                                    toggleBtn.textContent = '🔽 收起详情';
+                                }
+                            }
+                        });
+                    });
+                }, 50);
+            } else {
+                // 原始模式：显示所有事件
+                eventsList.innerHTML = '';
+                events.forEach(event => {
+                    const eventItem = createEventItem(event);
+                    eventsList.appendChild(eventItem);
+                });
+            }
+        }
+
+        // 创建聚合会话卡片
+        function createSessionCard(session) {
+            const startTime = new Date(session.startTime / 1000000);
+            const endTime = new Date(session.endTime / 1000000);
+            
+            const startTimeStr = startTime.toLocaleString('zh-CN', {
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
             });
+            
+            const endTimeStr = endTime.toLocaleString('zh-CN', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            });
+
+            // 获取会话的主要命令（通常是第一个事件的命令）
+            const mainEvent = session.events[0];
+            const mainCommand = mainEvent.comm;
+            
+            // 生成会话描述
+            const eventTypes = [...new Set(session.events.map(e => e.event_type))];
+            const eventTypesDesc = eventTypes.map(type => {
+                const typeNames = {
+                    0: 'EXECVE',
+                    1: 'SETUID',
+                    2: 'FILE_WRITE',
+                    3: 'OPENAT',
+                    4: 'CONNECT',
+                    5: 'BIND',
+                    6: 'EXIT'
+                };
+                return typeNames[type] || 'UNKNOWN';
+            }).join(', ');
+
+            const riskClass = session.riskLevel.toLowerCase();
+            const riskBadge = `<span class="risk-badge ${riskClass}">${session.riskLevel}</span>`;
+
+            const sessionCard = document.createElement('div');
+            sessionCard.className = `event-item ${riskClass}`;
+            sessionCard.innerHTML = `
+                <div class="event-header">
+                    <div class="event-title">
+                        <span class="event-comm">📦 ${mainCommand} 等 ${session.eventCount} 个事件</span>
+                        ${riskBadge}
+                    </div>
+                    <div class="event-meta">
+                        <span>🕐 ${startTimeStr} - ${endTimeStr}</span>
+                    </div>
+                </div>
+                <div class="event-details">
+                    <div class="event-detail-item"><span>事件数:</span> ${session.eventCount}</div>
+                    <div class="event-detail-item"><span>事件类型:</span> ${eventTypesDesc}</div>
+                    <div class="event-detail-item"><span>时间跨度:</span> ${Math.round((session.endTime - session.startTime) / 1000000)}ms</div>
+                </div>
+                <div class="event-badges">
+                    <span class="badge" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">🔄 聚合会话</span>
+                </div>
+                <div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
+                    <button class="timeline-btn" onclick="toggleSessionDetails(this)">
+                        🔍 查看详情 (${session.eventCount} 个事件)
+                    </button>
+                </div>
+                <div class="session-details" style="display: none; margin-top: 16px; padding: 16px; background: rgba(0, 0, 0, 0.3); border-radius: 8px; border-left: 3px solid #667eea;">
+                    <div style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: #667eea;">
+                        📋 会话包含的事件：
+                    </div>
+                    ${session.events.map(event => {
+                        const eventTime = new Date(event.timestamp / 1000000);
+                        const eventTimeStr = eventTime.toLocaleString('zh-CN', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                            hour12: false
+                        });
+                        
+                        let eventTypeBadge = '';
+                        switch(event.event_type) {
+                            case 0: eventTypeBadge = '<span class="badge badge-execve">EXECVE</span>'; break;
+                            case 1: eventTypeBadge = '<span class="badge badge-setuid">SETUID</span>'; break;
+                            case 2: eventTypeBadge = '<span class="badge badge-file-write">FILE_WRITE</span>'; break;
+                            case 3: eventTypeBadge = '<span class="badge" style="background: #17a2b8;">OPENAT</span>'; break;
+                            case 4: eventTypeBadge = '<span class="badge" style="background: #e83e8c;">CONNECT</span>'; break;
+                            case 5: eventTypeBadge = '<span class="badge" style="background: #6f42c1;">BIND</span>'; break;
+                            case 6: eventTypeBadge = '<span class="badge" style="background: #6c757d;">EXIT</span>'; break;
+                            default: eventTypeBadge = '<span class="badge">UNKNOWN</span>';
+                        }
+                        
+                        return `
+                            <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05); font-size: 13px;">
+                                <span style="color: #a0a0a0; min-width: 80px;">${eventTimeStr}</span>
+                                <span style="font-weight: 600; color: #e0e0e0; min-width: 100px;">${event.comm}</span>
+                                ${eventTypeBadge}
+                                <span style="color: #a0a0a0; flex: 1;">PID: ${event.pid}</span>
+                                <button class="timeline-btn" style="padding: 4px 8px; font-size: 11px;" onclick='exportForensicReport(${event.id})'>
+                                    📄 报告
+                                </button>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+
+            return sessionCard;
+        }
+
+        // 切换会话详情显示
+        function toggleSessionDetails(button) {
+            // 按钮被包裹在 div 中，需要通过父元素的 nextElementSibling 来查找 .session-details
+            const sessionDetails = button.parentElement.nextElementSibling;
+            
+            if (!sessionDetails || !sessionDetails.classList.contains('session-details')) {
+                console.error('找不到 session-details 元素');
+                return;
+            }
+            
+            const isHidden = sessionDetails.style.display === 'none';
+            
+            if (isHidden) {
+                sessionDetails.style.display = 'block';
+                button.textContent = '🔽 收起详情';
+                
+                // 记录展开的会话（通过第一个事件的ID标识）
+                const eventCount = sessionDetails.querySelectorAll('div[style*="display: flex"]').length;
+                const firstEventElement = sessionDetails.querySelector('div[style*="display: flex"]');
+                if (firstEventElement) {
+                    // 从按钮文本中提取事件ID（在导出报告按钮中）
+                    const reportBtn = firstEventElement.querySelector('button[onclick*="exportForensicReport"]');
+                    if (reportBtn) {
+                        const match = reportBtn.getAttribute('onclick').match(/exportForensicReport\((\d+)\)/);
+                        if (match) {
+                            expandedSessions.add(match[1]);
+                        }
+                    }
+                }
+            } else {
+                sessionDetails.style.display = 'none';
+                // 重新获取事件数量
+                const eventCount = sessionDetails.querySelectorAll('div[style*="display: flex"]').length;
+                button.textContent = `🔍 查看详情 (${eventCount} 个事件)`;
+                
+                // 移除展开状态
+                const firstEventElement = sessionDetails.querySelector('div[style*="display: flex"]');
+                if (firstEventElement) {
+                    const reportBtn = firstEventElement.querySelector('button[onclick*="exportForensicReport"]');
+                    if (reportBtn) {
+                        const match = reportBtn.getAttribute('onclick').match(/exportForensicReport\((\d+)\)/);
+                        if (match) {
+                            expandedSessions.delete(match[1]);
+                        }
+                    }
+                }
+            }
         }
 
         // 获取风险特征说明
@@ -1318,6 +1678,9 @@
             connectionText.textContent = '已连接';
         };
 
+        // WebSocket 消息防抖处理
+        let wsMessageTimeout = null;
+        
         ws.onmessage = function(event) {
             const data = JSON.parse(event.data);
             console.log('New event via WebSocket:', data);
@@ -1325,8 +1688,14 @@
             // 自动刷新统计数据
             loadStatistics();
             
-            // 如果当前过滤器允许，添加新事件到列表
-            applyFilters();
+            // 使用防抖机制，避免频繁刷新
+            if (wsMessageTimeout) {
+                clearTimeout(wsMessageTimeout);
+            }
+            
+            wsMessageTimeout = setTimeout(() => {
+                applyFilters();
+            }, 300); // 300ms 后刷新
         };
 
         ws.onerror = function() {
@@ -1812,11 +2181,13 @@
                                 2: 'FILE_WRITE'
                             };
                             
-                            const riskClass = event.risk_level === 'HIGH' ? 'high' : 
-                                           event.risk_level === 'MEDIUM' ? 'medium' : 'low';
-                            
-                            const riskColor = event.risk_level === 'HIGH' ? '#dc3545' : 
-                                            event.risk_level === 'MEDIUM' ? '#ffc107' : '#28a745';
+                            const riskClass = event.risk_level === 'HIGH' ? 'high' :
+                                           event.risk_level === 'MEDIUM' ? 'medium' :
+                                           event.risk_level === 'LOW' ? 'low' : 'none';
+
+                            const riskColor = event.risk_level === 'HIGH' ? '#dc3545' :
+                                            event.risk_level === 'MEDIUM' ? '#ffc107' :
+                                            event.risk_level === 'LOW' ? '#28a745' : '#6c757d';
                             
                             return React.createElement('tr', { key: event.id, className: 'new-event' },
                                 React.createElement('td', null, event.id),

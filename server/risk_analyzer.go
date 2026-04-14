@@ -3,8 +3,12 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -12,21 +16,200 @@ import (
 type RiskLevel string
 
 const (
-	RiskLow    RiskLevel = "LOW"
-	RiskMedium RiskLevel = "MEDIUM"
-	RiskHigh   RiskLevel = "HIGH"
+	RiskNone   RiskLevel = "NONE"   // 无风险
+	RiskLow    RiskLevel = "LOW"    // 低风险
+	RiskMedium RiskLevel = "MEDIUM" // 中风险
+	RiskHigh   RiskLevel = "HIGH"   // 高风险
 )
 
+// WhiteListConfig 白名单配置文件结构
+type WhiteListConfig struct {
+	Version    string   `json:"version"`
+	Description string   `json:"description"`
+	Whitelist  []string `json:"whitelist"`
+	Patterns   []string `json:"patterns"`
+}
+
+// WhiteList 白名单管理器
+type WhiteList struct {
+	whitelist     map[string]bool // 精确匹配白名单
+	patterns      []string        // 模式匹配白名单（支持通配符）
+	mu            sync.RWMutex
+	lastLoadTime  time.Time
+	configPath    string
+}
+
+// NewWhiteList 创建白名单管理器
+func NewWhiteList(configPath string) *WhiteList {
+	wl := &WhiteList{
+		whitelist: make(map[string]bool),
+		patterns:  []string{},
+		configPath: configPath,
+	}
+	
+	// 尝试加载白名单配置
+	if err := wl.Load(); err != nil {
+		// 如果加载失败，使用默认白名单
+		wl.loadDefaultWhitelist()
+	}
+	
+	return wl
+}
+
+// Load 从配置文件加载白名单
+func (wl *WhiteList) Load() error {
+	wl.mu.Lock()
+	defer wl.mu.Unlock()
+	
+	// 清空现有白名单
+	wl.whitelist = make(map[string]bool)
+	wl.patterns = []string{}
+	
+	// 如果配置文件不存在，返回错误
+	if _, err := os.Stat(wl.configPath); os.IsNotExist(err) {
+		return fmt.Errorf("whitelist config file not found: %s", wl.configPath)
+	}
+	
+	// 读取配置文件
+	data, err := os.ReadFile(wl.configPath)
+	if err != nil {
+		return fmt.Errorf("failed to read whitelist config: %w", err)
+	}
+	
+	// 解析JSON
+	var config WhiteListConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return fmt.Errorf("failed to parse whitelist config: %w", err)
+	}
+	
+	// 加载精确匹配白名单
+	for _, proc := range config.Whitelist {
+		wl.whitelist[proc] = true
+	}
+	
+	// 加载模式匹配白名单
+	for _, pattern := range config.Patterns {
+		wl.patterns = append(wl.patterns, pattern)
+	}
+	
+	wl.lastLoadTime = time.Now()
+	return nil
+}
+
+// loadDefaultWhitelist 加载默认白名单
+func (wl *WhiteList) loadDefaultWhitelist() {
+	defaultProcesses := []string{
+		"systemd", "init", "bash", "sh", "zsh", "dash", "fish",
+		"ls", "cd", "pwd", "cat", "grep", "sed", "awk", "sort",
+		"uniq", "head", "tail", "less", "more", "cp", "mv",
+		"rm", "mkdir", "rmdir", "touch", "chmod", "chown", "ps",
+		"top", "htop", "df", "du", "free", "uptime", "date", "echo",
+		"printf", "which", "whereis", "man", "help", "curl", "wget",
+		"tar", "gzip", "gunzip", "zip", "unzip", "find", "locate",
+		"nano", "vim", "vi", "emacs", "python", "python3", "node",
+		"npm", "docker", "dockerd", "containerd", "sshd", "ssh-agent",
+		"rsync", "scp", "sftp", "git", "svn", "hg", "make", "gcc",
+		"g++", "clang", "clang++", "go", "java", "javac", "mvn",
+		"gradle", "ping", "ping6", "traceroute", "nslookup", "dig",
+		"host", "ip", "ifconfig", "route", "netstat", "ss", "journalctl",
+		"systemctl", "service", "apt", "apt-get", "yum", "dnf", "pacman",
+		"snap", "dpkg", "rpm", "cron", "crond", "at", "batch", "rsyslog",
+		"syslog-ng", "logrotate", "postfix", "sendmail", "nginx", "apache2",
+		"httpd", "mysql", "mysqld", "mariadb", "postgres", "postgresql",
+		"mongodb", "redis", "redis-server", "memcached", "lighttpd", "caddy",
+		"haproxy", "keepalived", "firewalld", "ufw", "iptables", "nft",
+	}
+	
+	for _, proc := range defaultProcesses {
+		wl.whitelist[proc] = true
+	}
+	
+	// 默认模式
+	wl.patterns = []string{
+		"python*", "node*", "npm*", "java*", "mvn*", "gradle*",
+		"go*", "ruby*", "gem*", "perl*", "php*", "composer*",
+		"cargo*", "rustc*",
+	}
+}
+
+// IsWhitelisted 检查进程是否在白名单中
+func (wl *WhiteList) IsWhitelisted(comm string) bool {
+	wl.mu.RLock()
+	defer wl.mu.RUnlock()
+	
+	commLower := strings.ToLower(comm)
+	
+	// 首先检查精确匹配
+	if wl.whitelist[commLower] {
+		return true
+	}
+	
+	// 检查模式匹配
+	for _, pattern := range wl.patterns {
+		if wl.matchPattern(commLower, pattern) {
+			return true
+		}
+	}
+	
+	return false
+}
+
+// matchPattern 简单的通配符匹配
+func (wl *WhiteList) matchPattern(text, pattern string) bool {
+	pattern = strings.ToLower(pattern)
+	text = strings.ToLower(text)
+	
+	// 如果模式以*结尾，检查前缀匹配
+	if strings.HasSuffix(pattern, "*") {
+		prefix := strings.TrimSuffix(pattern, "*")
+		return strings.HasPrefix(text, prefix)
+	}
+	
+	// 如果模式以*开头，检查后缀匹配
+	if strings.HasPrefix(pattern, "*") {
+		suffix := strings.TrimPrefix(pattern, "*")
+		return strings.HasSuffix(text, suffix)
+	}
+	
+	// 如果模式包含*，检查包含匹配
+	if strings.Contains(pattern, "*") {
+		parts := strings.Split(pattern, "*")
+		if len(parts) == 2 {
+			return strings.HasPrefix(text, parts[0]) && strings.HasSuffix(text, parts[1])
+		}
+	}
+	
+	// 否则精确匹配
+	return text == pattern
+}
+
+// Reload 重新加载白名单配置
+func (wl *WhiteList) Reload() error {
+	return wl.Load()
+}
+
 // RiskAnalyzer 负责事件风险评级
-type RiskAnalyzer struct{}
+type RiskAnalyzer struct {
+	whitelist *WhiteList
+}
 
 // NewRiskAnalyzer 创建风险分析器
 func NewRiskAnalyzer() *RiskAnalyzer {
-	return &RiskAnalyzer{}
+	// 获取白名单配置文件路径
+	configPath := filepath.Join(".", "process_whitelist.json")
+	
+	return &RiskAnalyzer{
+		whitelist: NewWhiteList(configPath),
+	}
 }
 
 // Evaluate 评估事件的风险等级
 func (ra *RiskAnalyzer) Evaluate(event ProcessEvent) RiskLevel {
+	// 首先检查白名单：如果进程在白名单中，直接返回无风险
+	if ra.whitelist != nil && ra.whitelist.IsWhitelisted(event.Comm) {
+		return RiskNone
+	}
+	
 	score := 0
 
 	// 1. 检查是否是真正的权限提升（从普通用户提升到 root）
@@ -135,8 +318,10 @@ func (ra *RiskAnalyzer) Evaluate(event ProcessEvent) RiskLevel {
 		return RiskHigh
 	} else if score >= 12 {
 		return RiskMedium
+	} else if score > 0 {
+		return RiskLow
 	}
-	return RiskLow
+	return RiskNone  // score为0，无风险
 }
 
 // isHighRiskProgram 检查是否是高风险程序

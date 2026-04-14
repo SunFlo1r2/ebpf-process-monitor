@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS security_events (
     is_privilege_escalation BOOLEAN DEFAULT 0,
     event_type INTEGER NOT NULL,
     target_file_type INTEGER DEFAULT 0,
-    risk_level TEXT NOT NULL DEFAULT 'LOW',
+    risk_level TEXT NOT NULL DEFAULT 'NONE',  -- NONE, LOW, MEDIUM, HIGH
     agent_id TEXT DEFAULT 'default',
     fingerprint TEXT UNIQUE,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -44,3 +44,7 @@ SELECT * FROM security_events WHERE risk_level = 'HIGH' ORDER BY timestamp DESC;
 -- 创建视图：最近事件（最近1000条）
 CREATE VIEW IF NOT EXISTS recent_events AS
 SELECT * FROM security_events ORDER BY timestamp DESC LIMIT 1000;
+
+-- 创建视图：有风险的事件（排除NONE等级）
+CREATE VIEW IF NOT EXISTS risky_events AS
+SELECT * FROM security_events WHERE risk_level IN ('LOW', 'MEDIUM', 'HIGH') ORDER BY timestamp DESC;
