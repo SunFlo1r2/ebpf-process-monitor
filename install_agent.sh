@@ -98,6 +98,7 @@ cd ..
 # 编译 Agent
 print_info "编译 Agent..."
 cd agent
+export GOPROXY=https://goproxy.cn,direct
 go build -o agent main.go
 print_info "Agent 编译完成"
 cd ..
